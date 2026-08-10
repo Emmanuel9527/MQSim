@@ -25,8 +25,8 @@ all: checkdirs MQSim MQSimIPCDaemon
 MQSim: $(OBJ)
 	$(LD) $^ -o $@
 
-MQSimIPCDaemon: mqsim_ipc_daemon.cpp
-	$(CC) $(CC_FLAGS) -I../nvmevirt $< -o $@
+MQSimIPCDaemon: mqsim_ipc_daemon.cpp mqsim_online_model.cpp mqsim_online_model.h
+	$(CC) $(CC_FLAGS) -I../nvmevirt -Isrc mqsim_ipc_daemon.cpp mqsim_online_model.cpp -o $@
 
 checkdirs: $(BUILD_DIR)
 
