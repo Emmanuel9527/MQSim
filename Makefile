@@ -20,10 +20,13 @@ endef
 
 .PHONY: all checkdirs clean
 
-all: checkdirs MQSim
+all: checkdirs MQSim MQSimIPCDaemon
 
 MQSim: $(OBJ)
 	$(LD) $^ -o $@
+
+MQSimIPCDaemon: mqsim_ipc_daemon.cpp
+	$(CC) $(CC_FLAGS) -I../nvmevirt $< -o $@
 
 checkdirs: $(BUILD_DIR)
 
@@ -33,5 +36,6 @@ $(BUILD_DIR):
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f MQSim
+	rm -f MQSimIPCDaemon
 
 $(foreach bdir,$(BUILD_DIR),$(eval $(call make-goal,$(bdir))))
