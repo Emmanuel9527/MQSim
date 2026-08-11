@@ -9,6 +9,8 @@ BUILD_DIR := $(addprefix build/,$(MODULES)) build
 SRC       := $(foreach sdir,$(SRC_DIR),$(wildcard $(sdir)/*.cpp))
 SRC       := src/main.cpp $(SRC)
 OBJ       := $(patsubst src/%.cpp,build/%.o,$(SRC))
+LIB_SRC   := $(filter-out src/main.cpp,$(SRC))
+LIB_OBJ   := $(patsubst src/%.cpp,build/%.o,$(LIB_SRC))
 INCLUDES  := $(addprefix -I,$(SRC_DIR))
 
 vpath %.cpp $(SRC_DIR)
@@ -25,8 +27,8 @@ all: checkdirs MQSim MQSimIPCDaemon
 MQSim: $(OBJ)
 	$(LD) $^ -o $@
 
-MQSimIPCDaemon: mqsim_ipc_daemon.cpp mqsim_online_model.cpp mqsim_online_model.h
-	$(CC) $(CC_FLAGS) -I../nvmevirt -Isrc mqsim_ipc_daemon.cpp mqsim_online_model.cpp -o $@
+MQSimIPCDaemon: mqsim_ipc_daemon.cpp mqsim_native_online_model.cpp mqsim_native_online_model.h $(LIB_OBJ)
+	$(CC) $(CC_FLAGS) $(INCLUDES) -I../nvmevirt mqsim_ipc_daemon.cpp mqsim_native_online_model.cpp $(LIB_OBJ) -o $@
 
 checkdirs: $(BUILD_DIR)
 

@@ -52,14 +52,15 @@ namespace MQSimEngine
 		_ObjectList.erase(it);
 	}
 
-	/// This is the main method of simulator which starts simulation process.
-	void Engine::Start_simulation()
-	{
-		started = true;
+		void Engine::Prepare_simulation()
+		{
+			if (started)
+				return;
+			started = true;
 
-		for(std::unordered_map<sim_object_id_type, Sim_Object*>::iterator obj = _ObjectList.begin();
-			obj != _ObjectList.end();
-			++obj) {
+			for(std::unordered_map<sim_object_id_type, Sim_Object*>::iterator obj = _ObjectList.begin();
+				obj != _ObjectList.end();
+				++obj) {
 			if (!obj->second->IsTriggersSetUp()) {
 				obj->second->Setup_triggers();
 			}
@@ -71,20 +72,20 @@ namespace MQSimEngine
 			obj->second->Validate_simulation_config();
 		}
 		
-		for (std::unordered_map<sim_object_id_type, Sim_Object*>::iterator obj = _ObjectList.begin();
-			obj != _ObjectList.end();
-			++obj) {
-			obj->second->Start_simulation();
-		}
-		
-		Sim_Event* ev = NULL;
-		while (true) {
-			if (_EventList->Count == 0 || stop) {
-				break;
+			for (std::unordered_map<sim_object_id_type, Sim_Object*>::iterator obj = _ObjectList.begin();
+				obj != _ObjectList.end();
+				++obj) {
+				obj->second->Start_simulation();
 			}
+		}
+
+		bool Engine::Run_next_event()
+		{
+			if (_EventList->Count == 0 || stop)
+				return false;
 
 			EventTreeNode* minNode = _EventList->Get_min_node();
-			ev = minNode->FirstSimEvent;
+			Sim_Event* ev = minNode->FirstSimEvent;
 
 			_sim_time = ev->Fire_time;
 
@@ -97,8 +98,29 @@ namespace MQSimEngine
 				delete consumed_event;
 			}
 			_EventList->Remove(minNode);
+			return true;
 		}
-	}
+
+		void Engine::Fast_forward(sim_time_type time)
+		{
+			if (time > _sim_time)
+				_sim_time = time;
+		}
+
+		/// This is the main method of simulator which starts simulation process.
+		void Engine::Start_simulation()
+		{
+			Prepare_simulation();
+			
+			Sim_Event* ev = NULL;
+			while (true) {
+				if (_EventList->Count == 0 || stop) {
+					break;
+				}
+
+				Run_next_event();
+			}
+		}
 
 	void Engine::Stop_simulation()
 	{

@@ -16,7 +16,7 @@
 #include <vector>
 
 #include "../nvmevirt/mqsim_ipc_protocol.h"
-#include "mqsim_online_model.h"
+#include "mqsim_native_online_model.h"
 
 static uint64_t read_latency_ns = 75000;
 static uint64_t write_latency_ns = 750000;
@@ -24,7 +24,8 @@ static uint64_t controller_overhead_ns = 20000;
 static uint64_t transfer_per_4k_ns = 2000;
 static const char *ssd_config_path = "ssdconfig.xml";
 static const char *preload_extents_path = NULL;
-static bool use_online_model = false;
+enum class TimingModel { FIXED, NATIVE_ONLINE };
+static TimingModel timing_model = TimingModel::FIXED;
 static uint64_t trace_first_requests = 0;
 static uint64_t stats_every_reqs = 0;
 static uint64_t stats_top_n = 8;
@@ -104,7 +105,7 @@ static bool msg_valid(const nvmev_mqsim_io_msg& msg)
 static void print_usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s [--model fixed|online] [--ssd-config PATH] [--preload-extents PATH] [--trace-first N] [--stats-every-reqs N] [--stats-top N] [--stats-full] [--read-ns N] [--write-ns N] [--ctrl-ns N] [--xfer-4k-ns N]\n",
+		"Usage: %s [--model fixed|online|native] [--ssd-config PATH] [--preload-extents PATH] [--trace-first N] [--stats-every-reqs N] [--stats-top N] [--stats-full] [--read-ns N] [--write-ns N] [--ctrl-ns N] [--xfer-4k-ns N]\n",
 		prog);
 }
 
@@ -133,7 +134,7 @@ static std::vector<std::string> split_csv_line(const std::string& line)
 	return fields;
 }
 
-static bool load_preload_extents(const char *path, MQSimOnlineModel& model)
+static bool load_preload_extents(const char *path, MQSimNativeOnlineModel& model)
 {
 	FILE *file = fopen(path, "r");
 	char line[4096];
@@ -175,7 +176,7 @@ static bool load_preload_extents(const char *path, MQSimOnlineModel& model)
 	}
 
 	fclose(file);
-	printf("MQSim preload extents loaded. extents=%" PRIu64 " allocated_pages=%" PRIu64 " source=%s\n",
+	printf("MQSim native preload extents loaded. extents=%" PRIu64 " allocated_pages=%" PRIu64 " source=%s\n",
 	       extent_count, allocated_pages, path);
 	return true;
 }
@@ -187,7 +188,7 @@ int main(int argc, char **argv)
 	long page_size = sysconf(_SC_PAGESIZE);
 	size_t shm_size;
 	struct pollfd pfd;
-	MQSimOnlineModel online_model;
+	MQSimNativeOnlineModel native_online_model;
 	uint64_t daemon_request_count = 0;
 
 	if (page_size <= 0) {
@@ -232,10 +233,10 @@ int main(int argc, char **argv)
 			if (i + 1 >= argc)
 				goto invalid_args;
 			const char *model = argv[++i];
-			if (!strcmp(model, "online")) {
-				use_online_model = true;
+			if (!strcmp(model, "online") || !strcmp(model, "native")) {
+				timing_model = TimingModel::NATIVE_ONLINE;
 			} else if (!strcmp(model, "fixed")) {
-				use_online_model = false;
+				timing_model = TimingModel::FIXED;
 			} else {
 				goto invalid_args;
 			}
@@ -244,15 +245,15 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (use_online_model) {
+	if (timing_model == TimingModel::NATIVE_ONLINE) {
 		std::string error;
 
-		if (!online_model.load_config(ssd_config_path, &error)) {
-			fprintf(stderr, "MQSim online model init failed: %s\n", error.c_str());
+		if (!native_online_model.initialize(ssd_config_path, &error)) {
+			fprintf(stderr, "MQSim native online model init failed: %s\n", error.c_str());
 			return 1;
 		}
 
-		if (preload_extents_path && !load_preload_extents(preload_extents_path, online_model))
+		if (preload_extents_path && !load_preload_extents(preload_extents_path, native_online_model))
 			return 1;
 	}
 
@@ -278,9 +279,9 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	if (use_online_model) {
-		printf("MQSim shared-memory IPC daemon connected. model=online config=%s %s\n",
-		       ssd_config_path, online_model.describe().c_str());
+	if (timing_model == TimingModel::NATIVE_ONLINE) {
+		printf("MQSim shared-memory IPC daemon connected. model=native config=%s %s\n",
+		       ssd_config_path, native_online_model.describe().c_str());
 	} else {
 		printf("MQSim shared-memory IPC daemon connected. model=fixed read=%lu ns write=%lu ns ctrl=%lu ns xfer_4k=%lu ns\n",
 		       read_latency_ns, write_latency_ns, controller_overhead_ns, transfer_per_4k_ns);
@@ -305,22 +306,25 @@ int main(int argc, char **argv)
 
 			reply = req;
 			reply.type = NVMEV_MQSIM_MSG_IO_REPLY;
-			reply.latency_ns = use_online_model ? online_model.estimate_latency_ns(req) : estimate_latency_ns(req);
+			if (timing_model == TimingModel::NATIVE_ONLINE)
+				reply.latency_ns = native_online_model.estimate_latency_ns(req);
+			else
+				reply.latency_ns = estimate_latency_ns(req);
 			reply.status = 0;
 			daemon_request_count++;
 			handled_this_loop++;
 
-			if (use_online_model && trace_first_requests > 0 &&
+			if (timing_model != TimingModel::FIXED && trace_first_requests > 0 &&
 			    daemon_request_count <= trace_first_requests) {
-				printf("MQSim online trace: %s\n", online_model.last_trace().c_str());
+				printf("MQSim online trace: %s\n", native_online_model.last_trace().c_str());
 			}
 
-			if (use_online_model && stats_every_reqs > 0 &&
+			if (timing_model != TimingModel::FIXED && stats_every_reqs > 0 &&
 			    daemon_request_count % stats_every_reqs == 0) {
 				if (stats_full)
-					online_model.print_stats(stdout);
+					native_online_model.print_stats(stdout);
 				else
-					online_model.print_compact_stats(stdout, stats_top_n);
+					native_online_model.print_compact_stats(stdout, stats_top_n);
 			}
 
 			if (!push_response(shm, reply)) {

@@ -85,11 +85,15 @@ class Host_Interface_NVMe : public Host_Interface_Base
 	friend class Request_Fetch_Unit_NVMe;
 
 public:
-	Host_Interface_NVMe(const sim_object_id_type &id, LHA_type max_logical_sector_address,
-						uint16_t submission_queue_depth, uint16_t completion_queue_depth,
-						unsigned int no_of_input_streams, uint16_t queue_fetch_size, unsigned int sectors_per_page, Data_Cache_Manager_Base *cache);
-	stream_id_type Create_new_stream(IO_Flow_Priority_Class::Priority priority_class, LHA_type start_logical_sector_address, LHA_type end_logical_sector_address,
-									 uint64_t submission_queue_base_address, uint64_t completion_queue_base_address);
+		Host_Interface_NVMe(const sim_object_id_type &id, LHA_type max_logical_sector_address,
+							uint16_t submission_queue_depth, uint16_t completion_queue_depth,
+							unsigned int no_of_input_streams, uint16_t queue_fetch_size, unsigned int sectors_per_page, Data_Cache_Manager_Base *cache);
+		typedef void (*OnlineRequestCompletionHandlerType)(User_Request *, sim_time_type);
+		void Enable_online_mode(OnlineRequestCompletionHandlerType handler);
+		User_Request *Submit_online_request(UserRequestType type, stream_id_type stream_id, LHA_type start_lba,
+											unsigned int size_in_sectors, sim_time_type submit_time);
+		stream_id_type Create_new_stream(IO_Flow_Priority_Class::Priority priority_class, LHA_type start_logical_sector_address, LHA_type end_logical_sector_address,
+										 uint64_t submission_queue_base_address, uint64_t completion_queue_base_address);
 	void Start_simulation();
 	void Validate_simulation_config();
 	void Execute_simulator_event(MQSimEngine::Sim_Event *);
@@ -98,9 +102,11 @@ public:
 	void Report_results_in_XML(std::string name_prefix, Utils::XmlWriter &xmlwriter);
 
 private:
-	uint16_t submission_queue_depth, completion_queue_depth;
-	unsigned int no_of_input_streams;
-};
+		uint16_t submission_queue_depth, completion_queue_depth;
+		unsigned int no_of_input_streams;
+		bool online_mode;
+		OnlineRequestCompletionHandlerType online_completion_handler;
+	};
 } // namespace SSD_Components
 
 #endif // !HOSTINTERFACE_NVME_H

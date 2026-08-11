@@ -81,13 +81,16 @@ inline void Input_Stream_Manager_NVMe::Handle_new_arrived_request(User_Request *
 
 		((Host_Interface_NVMe *)host_interface)->broadcast_user_request_arrival_signal(request);
 	}
-	else
-	{ //This is a write request
-		((Input_Stream_NVMe *)input_streams[request->Stream_id])->Waiting_user_requests.push_back(request);
-		((Input_Stream_NVMe *)input_streams[request->Stream_id])->STAT_number_of_write_requests++;
-		((Host_Interface_NVMe *)host_interface)->request_fetch_unit->Fetch_write_data(request);
+		else
+		{ //This is a write request
+			((Input_Stream_NVMe *)input_streams[request->Stream_id])->Waiting_user_requests.push_back(request);
+			((Input_Stream_NVMe *)input_streams[request->Stream_id])->STAT_number_of_write_requests++;
+			if (((Host_Interface_NVMe *)host_interface)->online_mode)
+				Handle_arrived_write_data(request);
+			else
+				((Host_Interface_NVMe *)host_interface)->request_fetch_unit->Fetch_write_data(request);
+		}
 	}
-}
 
 inline void Input_Stream_Manager_NVMe::Handle_arrived_write_data(User_Request *request)
 {
@@ -99,15 +102,24 @@ inline void Input_Stream_Manager_NVMe::Handle_serviced_request(User_Request *req
 {
 	stream_id_type stream_id = request->Stream_id;
 	((Input_Stream_NVMe *)input_streams[request->Stream_id])->Waiting_user_requests.remove(request);
-	((Input_Stream_NVMe *)input_streams[stream_id])->On_the_fly_requests--;
+		if (((Input_Stream_NVMe *)input_streams[stream_id])->On_the_fly_requests > 0)
+			((Input_Stream_NVMe *)input_streams[stream_id])->On_the_fly_requests--;
 
 	DEBUG("** Host Interface: Request #" << request->ID << " from stream #" << request->Stream_id << " is finished")
 
-	//If this is a read request, then the read data should be written to host memory
-	if (request->Type == UserRequestType::READ)
-	{
-		((Host_Interface_NVMe *)host_interface)->request_fetch_unit->Send_read_data(request);
-	}
+		//If this is a read request, then the read data should be written to host memory
+		if (((Host_Interface_NVMe *)host_interface)->online_mode) {
+			Host_Interface_NVMe *hi = (Host_Interface_NVMe *)host_interface;
+			if (hi->online_completion_handler != NULL)
+				hi->online_completion_handler(request, Simulator->Time());
+			DELETE_REQUEST_NVME(request);
+			return;
+		}
+
+		if (request->Type == UserRequestType::READ)
+		{
+			((Host_Interface_NVMe *)host_interface)->request_fetch_unit->Send_read_data(request);
+		}
 
 	//there are waiting requests in the submission queue but have not been fetched, due to Queue_fetch_size limit
 	if (((Input_Stream_NVMe *)input_streams[stream_id])->Submission_head != ((Input_Stream_NVMe *)input_streams[stream_id])->Submission_tail)
@@ -375,14 +387,46 @@ void Request_Fetch_Unit_NVMe::Send_read_data(User_Request *request)
 	host_interface->Send_write_message_to_host(sqe->PRP_entry_1, request->Data, request->Size_in_byte);
 }
 
-Host_Interface_NVMe::Host_Interface_NVMe(const sim_object_id_type &id,
-										 LHA_type max_logical_sector_address, uint16_t submission_queue_depth, uint16_t completion_queue_depth,
-										 unsigned int no_of_input_streams, uint16_t queue_fetch_size, unsigned int sectors_per_page, Data_Cache_Manager_Base *cache) : Host_Interface_Base(id, HostInterface_Types::NVME, max_logical_sector_address, sectors_per_page, cache),
-																																									   submission_queue_depth(submission_queue_depth), completion_queue_depth(completion_queue_depth), no_of_input_streams(no_of_input_streams)
-{
-	this->input_stream_manager = new Input_Stream_Manager_NVMe(this, queue_fetch_size);
-	this->request_fetch_unit = new Request_Fetch_Unit_NVMe(this);
-}
+	Host_Interface_NVMe::Host_Interface_NVMe(const sim_object_id_type &id,
+											 LHA_type max_logical_sector_address, uint16_t submission_queue_depth, uint16_t completion_queue_depth,
+											 unsigned int no_of_input_streams, uint16_t queue_fetch_size, unsigned int sectors_per_page, Data_Cache_Manager_Base *cache) : Host_Interface_Base(id, HostInterface_Types::NVME, max_logical_sector_address, sectors_per_page, cache),
+																																										   submission_queue_depth(submission_queue_depth), completion_queue_depth(completion_queue_depth), no_of_input_streams(no_of_input_streams),
+																																										   online_mode(false), online_completion_handler(NULL)
+	{
+		this->input_stream_manager = new Input_Stream_Manager_NVMe(this, queue_fetch_size);
+		this->request_fetch_unit = new Request_Fetch_Unit_NVMe(this);
+	}
+
+	void Host_Interface_NVMe::Enable_online_mode(OnlineRequestCompletionHandlerType handler)
+	{
+		online_mode = true;
+		online_completion_handler = handler;
+	}
+
+	User_Request *Host_Interface_NVMe::Submit_online_request(UserRequestType type, stream_id_type stream_id,
+															 LHA_type start_lba, unsigned int size_in_sectors,
+															 sim_time_type submit_time)
+	{
+		User_Request *request = new User_Request;
+		Submission_Queue_Entry *sqe = new Submission_Queue_Entry;
+
+		memset(sqe, 0, sizeof(*sqe));
+		sqe->Opcode = type == UserRequestType::READ ? NVME_READ_OPCODE : NVME_WRITE_OPCODE;
+		sqe->Command_specific[0] = (uint32_t)(start_lba & 0xffffffffULL);
+		sqe->Command_specific[1] = (uint32_t)(start_lba >> 32);
+		sqe->Command_specific[2] = size_in_sectors & 0x0000ffff;
+
+		request->IO_command_info = sqe;
+		request->Stream_id = stream_id;
+		request->Priority_class = ((Input_Stream_Manager_NVMe *)input_stream_manager)->Get_priority_class(stream_id);
+		request->STAT_InitiationTime = submit_time;
+		request->Type = type;
+		request->Start_LBA = start_lba;
+		request->SizeInSectors = size_in_sectors;
+		request->Size_in_byte = size_in_sectors * SECTOR_SIZE_IN_BYTE;
+		((Input_Stream_Manager_NVMe *)input_stream_manager)->Handle_new_arrived_request(request);
+		return request;
+	}
 
 stream_id_type Host_Interface_NVMe::Create_new_stream(IO_Flow_Priority_Class::Priority priority_class, LHA_type start_logical_sector_address, LHA_type end_logical_sector_address,
 													  uint64_t submission_queue_base_address, uint64_t completion_queue_base_address)
