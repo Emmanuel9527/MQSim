@@ -190,6 +190,7 @@ int main(int argc, char **argv)
 	struct pollfd pfd;
 	MQSimNativeOnlineModel native_online_model;
 	uint64_t daemon_request_count = 0;
+	uint64_t daemon_reply_count = 0;
 
 	if (page_size <= 0) {
 		perror("sysconf(_SC_PAGESIZE)");
@@ -304,20 +305,22 @@ int main(int argc, char **argv)
 			if (!msg_valid(req))
 				continue;
 
-			reply = req;
-			reply.type = NVMEV_MQSIM_MSG_IO_REPLY;
-			if (timing_model == TimingModel::NATIVE_ONLINE)
-				reply.latency_ns = native_online_model.estimate_latency_ns(req);
-			else
+			if (timing_model == TimingModel::NATIVE_ONLINE) {
+				native_online_model.submit_request(req);
+			} else {
+				reply = req;
+				reply.type = NVMEV_MQSIM_MSG_IO_REPLY;
 				reply.latency_ns = estimate_latency_ns(req);
-			reply.status = 0;
+				reply.status = 0;
+				if (!push_response(shm, reply)) {
+					fprintf(stderr, "Response ring is full; dropping request_id=%llu\n",
+						(unsigned long long)req.request_id);
+					continue;
+				}
+				produced_response = true;
+			}
 			daemon_request_count++;
 			handled_this_loop++;
-
-			if (timing_model != TimingModel::FIXED && trace_first_requests > 0 &&
-			    daemon_request_count <= trace_first_requests) {
-				printf("MQSim online trace: %s\n", native_online_model.last_trace().c_str());
-			}
 
 			if (timing_model != TimingModel::FIXED && stats_every_reqs > 0 &&
 			    daemon_request_count % stats_every_reqs == 0) {
@@ -326,14 +329,30 @@ int main(int argc, char **argv)
 				else
 					native_online_model.print_compact_stats(stdout, stats_top_n);
 			}
-
-			if (!push_response(shm, reply)) {
-				fprintf(stderr, "Response ring is full; dropping request_id=%llu\n",
-					(unsigned long long)req.request_id);
-				continue;
-			}
-			produced_response = true;
 		}
+
+			if (timing_model == TimingModel::NATIVE_ONLINE) {
+				nvmev_mqsim_io_msg reply;
+				std::string trace;
+
+				if (native_online_model.has_pending_requests() &&
+				    !native_online_model.run_until_next_completion()) {
+				fprintf(stderr, "MQSim native event queue drained with pending requests\n");
+				break;
+			}
+
+				while (native_online_model.pop_completed_reply(&reply, &trace)) {
+					if (!push_response(shm, reply)) {
+						fprintf(stderr, "Response ring is full; dropping request_id=%llu\n",
+							(unsigned long long)reply.request_id);
+					continue;
+					}
+					daemon_reply_count++;
+					if (trace_first_requests > 0 && daemon_reply_count <= trace_first_requests)
+						printf("MQSim online trace: %s\n", trace.c_str());
+					produced_response = true;
+				}
+			}
 
 		if (handled_this_loop > 0)
 			fflush(stdout);
@@ -342,6 +361,9 @@ int main(int argc, char **argv)
 			perror("ioctl notify response");
 			break;
 		}
+
+		if (timing_model == TimingModel::NATIVE_ONLINE && native_online_model.has_pending_requests())
+			continue;
 
 		ready = poll(&pfd, 1, -1);
 		if (ready < 0) {

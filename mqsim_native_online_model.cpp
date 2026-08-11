@@ -25,7 +25,8 @@ MQSimNativeOnlineModel::MQSimNativeOnlineModel()
 	  preload_sectors(0), read_requests(0), write_requests(0),
 	  completed_requests(0), flash_read_transactions(0),
 	  flash_write_transactions(0), flash_erase_transactions(0),
-	  channel_count(0), chips_per_channel(0), dies_per_chip(0)
+	  channel_count(0), chips_per_channel(0), dies_per_chip(0),
+	  events_run(0), max_pending(0)
 {
 }
 
@@ -173,13 +174,21 @@ uint64_t MQSimNativeOnlineModel::preload_write(uint64_t slba, uint32_t nlb)
 	uint32_t sectors_left = nlb;
 
 	while (sectors_left > 0) {
-		uint32_t sectors = std::min<uint32_t>(sectors_left, sectors_per_page);
+			uint32_t sectors = std::min<uint32_t>(sectors_left, sectors_per_page);
+			nvmev_mqsim_io_msg req;
 
-		submit_and_drain(NVMEV_MQSIM_IO_WRITE, current_slba, sectors,
-				 Simulator->Time(), 0);
-		current_slba += sectors;
-		sectors_left -= sectors;
-		loaded_sectors += sectors;
+			memset(&req, 0, sizeof(req));
+			req.magic = NVMEV_MQSIM_MAGIC;
+			req.version = NVMEV_MQSIM_VERSION;
+			req.type = NVMEV_MQSIM_MSG_IO_REQUEST;
+			req.opcode = NVMEV_MQSIM_IO_WRITE;
+			req.submit_time_ns = Simulator->Time();
+			req.slba = current_slba;
+			req.nlb = sectors;
+			submit_and_drain(req);
+			current_slba += sectors;
+			sectors_left -= sectors;
+			loaded_sectors += sectors;
 		preload_requests++;
 	}
 	preload_sectors += loaded_sectors;
@@ -188,56 +197,82 @@ uint64_t MQSimNativeOnlineModel::preload_write(uint64_t slba, uint32_t nlb)
 
 uint64_t MQSimNativeOnlineModel::estimate_latency_ns(const nvmev_mqsim_io_msg& req)
 {
-	return submit_and_drain(req.opcode, req.slba, req.nlb, req.submit_time_ns,
-				req.request_id);
+	return submit_and_drain(req);
 }
 
-uint64_t MQSimNativeOnlineModel::submit_and_drain(uint32_t opcode, uint64_t slba, uint32_t nlb,
-						  uint64_t submit_time_ns, uint64_t external_id)
+bool MQSimNativeOnlineModel::submit_request(const nvmev_mqsim_io_msg& req)
 {
 	SSD_Components::UserRequestType type =
-		opcode == NVMEV_MQSIM_IO_WRITE ? SSD_Components::UserRequestType::WRITE :
+		req.opcode == NVMEV_MQSIM_IO_WRITE ? SSD_Components::UserRequestType::WRITE :
 						 SSD_Components::UserRequestType::READ;
 	PendingRequest *pending = new PendingRequest;
 	SSD_Components::User_Request *request;
 
-	pending->external_id = external_id;
-	pending->submit_time_ns = submit_time_ns;
-	pending->completed = false;
-	pending->completion_time_ns = 0;
-	pending_storage.push_back(pending);
+	pending->external_id = req.request_id;
+	pending->submit_time_ns = req.submit_time_ns;
+	pending->original = req;
 
-	Simulator->Fast_forward((sim_time_type)submit_time_ns);
-	request = host_interface->Submit_online_request(type, 0, slba, nlb,
-							(sim_time_type)submit_time_ns);
+	Simulator->Fast_forward((sim_time_type)req.submit_time_ns);
+	request = host_interface->Submit_online_request(type, 0, req.slba, req.nlb,
+							(sim_time_type)req.submit_time_ns);
 	pending_by_request[request] = pending;
-
-	while (!pending->completed) {
-		if (!Simulator->Run_next_event())
-			throw std::runtime_error("MQSim event queue drained before online request completed");
-	}
-
 	total_requests++;
-	completed_requests++;
-	if (opcode == NVMEV_MQSIM_IO_WRITE)
+	if (req.opcode == NVMEV_MQSIM_IO_WRITE)
 		write_requests++;
 	else
 		read_requests++;
+	if (pending_by_request.size() > max_pending)
+		max_pending = pending_by_request.size();
+	return true;
+}
 
-	uint64_t latency = pending->completion_time_ns > submit_time_ns ?
-		pending->completion_time_ns - submit_time_ns : 0;
-	std::ostringstream trace;
+bool MQSimNativeOnlineModel::run_until_next_completion()
+{
+	size_t completed_before = completed_replies.size();
 
-	trace << "request_id=" << external_id
-	      << " op=" << (opcode == NVMEV_MQSIM_IO_WRITE ? "write" : "read")
-	      << " slba=" << slba
-	      << " nlb=" << nlb
-	      << " lpn=" << (slba / sectors_per_page)
-	      << " sectors_per_page=" << sectors_per_page
-	      << " completion_ns=" << pending->completion_time_ns
-	      << " latency_ns=" << latency;
-	last_trace_line = trace.str();
-	return latency;
+	while (completed_replies.size() == completed_before && !pending_by_request.empty()) {
+		if (!Simulator->Run_next_event())
+			return false;
+		events_run++;
+	}
+	return completed_replies.size() > completed_before;
+}
+
+bool MQSimNativeOnlineModel::pop_completed_reply(nvmev_mqsim_io_msg *reply, std::string *trace)
+{
+	if (completed_replies.empty())
+		return false;
+	if (reply)
+		*reply = completed_replies.front();
+	if (trace)
+		*trace = completed_traces.empty() ? std::string() : completed_traces.front();
+	completed_replies.pop_front();
+	if (!completed_traces.empty())
+		completed_traces.pop_front();
+	return true;
+}
+
+bool MQSimNativeOnlineModel::has_pending_requests() const
+{
+	return !pending_by_request.empty();
+}
+
+size_t MQSimNativeOnlineModel::pending_count() const
+{
+	return pending_by_request.size();
+}
+
+uint64_t MQSimNativeOnlineModel::submit_and_drain(const nvmev_mqsim_io_msg& req)
+{
+	nvmev_mqsim_io_msg reply;
+
+	submit_request(req);
+	while (!pop_completed_reply(&reply)) {
+		if (!run_until_next_completion())
+			throw std::runtime_error("MQSim event queue drained before online request completed");
+	}
+
+	return reply.latency_ns;
 }
 
 void MQSimNativeOnlineModel::handle_completion(SSD_Components::User_Request *request,
@@ -248,9 +283,30 @@ void MQSimNativeOnlineModel::handle_completion(SSD_Components::User_Request *req
 
 	if (it == pending_by_request.end())
 		return;
-	it->second->completed = true;
-	it->second->completion_time_ns = completion_time;
+	PendingRequest *pending = it->second;
+	nvmev_mqsim_io_msg reply = pending->original;
+	uint64_t latency = completion_time > pending->submit_time_ns ?
+		(uint64_t)completion_time - pending->submit_time_ns : 0;
+	std::ostringstream trace;
+
+	reply.type = NVMEV_MQSIM_MSG_IO_REPLY;
+	reply.latency_ns = latency;
+	reply.status = 0;
+	trace << "request_id=" << pending->external_id
+	      << " op=" << (pending->original.opcode == NVMEV_MQSIM_IO_WRITE ? "write" : "read")
+	      << " slba=" << pending->original.slba
+	      << " nlb=" << pending->original.nlb
+	      << " lpn=" << (pending->original.slba / sectors_per_page)
+	      << " sectors_per_page=" << sectors_per_page
+	      << " completion_ns=" << completion_time
+	      << " latency_ns=" << latency
+	      << " pending=" << pending_by_request.size() - 1;
+	last_trace_line = trace.str();
+	completed_replies.push_back(reply);
+	completed_traces.push_back(last_trace_line);
+	completed_requests++;
 	pending_by_request.erase(it);
+	delete pending;
 }
 
 void MQSimNativeOnlineModel::completion_trampoline(SSD_Components::User_Request *request,
@@ -295,6 +351,8 @@ void MQSimNativeOnlineModel::print_stats(FILE *out) const
 		preload_requests, preload_sectors);
 	fprintf(out, "  online: reads=%" PRIu64 " writes=%" PRIu64 " pending=%zu\n",
 		read_requests, write_requests, pending_by_request.size());
+	fprintf(out, "  async: completed_queue=%zu max_pending=%" PRIu64 " events_run=%" PRIu64 "\n",
+		completed_replies.size(), max_pending, events_run);
 	fprintf(out, "  flash transactions: reads=%" PRIu64 " writes=%" PRIu64 " erases=%" PRIu64 "\n",
 		flash_read_transactions, flash_write_transactions, flash_erase_transactions);
 	fprintf(out, "  channels:\n");
@@ -402,6 +460,8 @@ void MQSimNativeOnlineModel::print_compact_stats(FILE *out, size_t top_n) const
 		preload_requests, preload_sectors);
 	fprintf(out, "  online: reads=%" PRIu64 " writes=%" PRIu64 " pending=%zu\n",
 		read_requests, write_requests, pending_by_request.size());
+	fprintf(out, "  async: completed_queue=%zu max_pending=%" PRIu64 " events_run=%" PRIu64 "\n",
+		completed_replies.size(), max_pending, events_run);
 	fprintf(out, "  flash transactions: reads=%" PRIu64 " writes=%" PRIu64 " erases=%" PRIu64 "\n",
 		flash_read_transactions, flash_write_transactions, flash_erase_transactions);
 	fprintf(out, "  channel distribution: ideal=%.2f%% min=%.2f%% max=%.2f%% total_ops=%" PRIu64 "\n",
@@ -473,8 +533,10 @@ uint64_t MQSimNativeOnlineModel::lun_index(uint32_t channel, uint32_t chip, uint
 
 void MQSimNativeOnlineModel::clear_pending()
 {
-	for (size_t i = 0; i < pending_storage.size(); i++)
-		delete pending_storage[i];
-	pending_storage.clear();
+	for (std::unordered_map<SSD_Components::User_Request *, PendingRequest *>::iterator it = pending_by_request.begin();
+	     it != pending_by_request.end(); it++)
+		delete it->second;
 	pending_by_request.clear();
+	completed_replies.clear();
+	completed_traces.clear();
 }

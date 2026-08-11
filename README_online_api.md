@@ -46,7 +46,7 @@ latency_ns
 status
 ```
 
-NVMeVirt 仍然處理真實 data path；MQSim 只回傳 timing。
+NVMeVirt 仍然處理真實 data path；MQSim 只回傳 timing。kernel 端會把已送給 MQSim 的 command 留在 pending work 裡，等 daemon 回覆後再更新該 command 的 completion target time。
 
 ### `MQSimIPCDaemon`
 
@@ -246,6 +246,16 @@ fio --name=sift-index-native-mqsim-read \
 cat /proc/nvmev/mqsim_ipc
 ```
 
+重點欄位：
+
+```text
+requests      kernel 已送進 MQSim daemon 的 I/O 數
+replies       kernel 已收到並套用的 MQSim reply 數
+pending       kernel 目前還在等 MQSim reply 的 I/O 數
+max_pending   kernel 觀察到的最高同時 pending I/O 數
+late_replies  reply 回來時 kernel 已找不到 pending request 的數量
+```
+
 ## Log 與統計資料
 
 daemon 會印出 preload 與 online request 統計，例如：
@@ -257,6 +267,7 @@ MQSim online trace: request_id=... op=read slba=... nlb=... lpn=... latency_ns=.
 MQSim native online stats: requests=... completed=...
   preload: write_requests=... sectors=...
   online: reads=... writes=... pending=...
+  async: completed_queue=... max_pending=... events_run=...
   flash transactions: reads=... writes=... erases=...
   read channel distribution: ideal=... min=... max=...
   read lun distribution: ideal=... min=... max=...
@@ -271,8 +282,20 @@ MQSim native online stats: requests=... completed=...
 --stats-full
 ```
 
+## 多筆 I/O 的處理方式
+
+kernel 端與 daemon 端都已經不是「收到一筆就立刻同步 drain 一筆」的模型。
+
+NVMeVirt kernel 收到 read/write command 後，會先照原本流程建立 `nvmev_io_work`，但如果 MQSim IPC 啟用，該 work 的 completion target 會先設成等待狀態，並綁定一個 MQSim `request_id`。接著 kernel 把 request 寫進 shared-memory request ring，host submit path 不會同步等待 MQSim 算完。
+
+daemon 端會先把 request ring 裡目前可讀到的 requests 全部送進 MQSim `Host_Interface_NVMe::Submit_online_request()`，每一筆 `User_Request *` 都會放進 pending table。之後 daemon 反覆呼叫 `Run_next_event()` 推進 MQSim event queue，等 MQSim 原生 completion callback 回來時，再把對應的 reply 放進 completed queue，最後寫回 NVMeVirt response ring。
+
+NVMeVirt kernel 收到 daemon response notification 後，會依 `request_id` 找回原本的 pending work，把 completion target 更新成 `submit_time_ns + latency_ns`。原本的 NVMeVirt I/O worker 之後會照常做 payload copy、填 CQE、發 interrupt。
+
+這代表 kernel 與 MQSim userspace 兩邊都可以承接「多筆 request 同時 pending」以及 out-of-order completion。kernel 的 `/proc/nvmev/mqsim_ipc` 裡 `max_pending` 可以檢查 host/NVMeVirt 端是否真的有多筆 outstanding I/O；daemon stats 裡的 `async.max_pending` 則可以檢查 MQSim userspace 端觀察到的最高 pending 數。
+
 ## 目前限制
 
-目前 online serving path 是同步 iodepth=1 友善版本。daemon 收到一筆 request 後，會推進 MQSim event queue 到該 request completion，再回覆 NVMeVirt。這已經足夠用於 iodepth=1 的 fio/DiskANN correctness 與 timing 實驗。
+目前 async path 沒有 per-request timer。若 request 已成功送進 daemon 但 daemon 後續卡住，該 I/O 會等到 daemon disconnect 時才用 NVMeVirt local timing fallback 放掉。因此實驗時建議同時觀察 `/proc/nvmev/mqsim_ipc` 的 `pending` 和 daemon log 的 completed request 數。
 
-若要完整支援高 iodepth、multi-queue 與 out-of-order completion，後續需要讓 NVMeVirt command 在 kernel 端進入 pending table，並讓 MQSim daemon 非同步回傳 completion time。
+另外，NVMeVirt 仍然負責搬真實資料 bytes；MQSim 不會讀取 DiskANN index 的內容，只模擬 host-visible LBA 對應到 MQSim FTL/flash transaction 後的 timing。
