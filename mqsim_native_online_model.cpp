@@ -15,6 +15,7 @@
 #include "src/ssd/NVM_PHY_ONFI.h"
 #include "src/ssd/NVM_Transaction_Flash.h"
 #include "src/ssd/SSD_Defs.h"
+#include "src/ssd/Stats.h"
 #include "src/utils/rapidxml/rapidxml.hpp"
 
 MQSimNativeOnlineModel *MQSimNativeOnlineModel::active_instance = NULL;
@@ -355,6 +356,12 @@ void MQSimNativeOnlineModel::print_stats(FILE *out) const
 		completed_replies.size(), max_pending, events_run);
 	fprintf(out, "  flash transactions: reads=%" PRIu64 " writes=%" PRIu64 " erases=%" PRIu64 "\n",
 		flash_read_transactions, flash_write_transactions, flash_erase_transactions);
+	fprintf(out, "  mapping: read_no_ppa_creations=%lu cmt_read_hits=%u cmt_read_misses=%u mapping_reads=%lu mapping_writes=%lu\n",
+		SSD_Components::Stats::Read_NO_PPA_mapping_creations,
+		SSD_Components::Stats::readTR_CMT_hits,
+		SSD_Components::Stats::readTR_CMT_miss,
+		SSD_Components::Stats::Total_flash_reads_for_mapping,
+		SSD_Components::Stats::Total_flash_writes_for_mapping);
 	fprintf(out, "  channels:\n");
 	for (size_t i = 0; i < channel_read_ops.size(); i++) {
 		uint64_t ops = channel_read_ops[i] + channel_write_ops[i] + channel_erase_ops[i];
@@ -464,6 +471,12 @@ void MQSimNativeOnlineModel::print_compact_stats(FILE *out, size_t top_n) const
 		completed_replies.size(), max_pending, events_run);
 	fprintf(out, "  flash transactions: reads=%" PRIu64 " writes=%" PRIu64 " erases=%" PRIu64 "\n",
 		flash_read_transactions, flash_write_transactions, flash_erase_transactions);
+	fprintf(out, "  mapping: read_no_ppa_creations=%lu cmt_read_hits=%u cmt_read_misses=%u mapping_reads=%lu mapping_writes=%lu\n",
+		SSD_Components::Stats::Read_NO_PPA_mapping_creations,
+		SSD_Components::Stats::readTR_CMT_hits,
+		SSD_Components::Stats::readTR_CMT_miss,
+		SSD_Components::Stats::Total_flash_reads_for_mapping,
+		SSD_Components::Stats::Total_flash_writes_for_mapping);
 	fprintf(out, "  channel distribution: ideal=%.2f%% min=%.2f%% max=%.2f%% total_ops=%" PRIu64 "\n",
 		channels.empty() ? 0.0 : 100.0 / (double)channels.size(),
 		channel_min, channel_max, total_channel_ops);

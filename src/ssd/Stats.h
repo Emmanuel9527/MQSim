@@ -17,7 +17,9 @@ namespace SSD_Components
 		static unsigned long IssuedSuspendProgramCMD, IssuedSuspendEraseCMD;
 
 		static unsigned long Total_flash_reads_for_mapping, Total_flash_writes_for_mapping;
+		static unsigned long Read_NO_PPA_mapping_creations;
 		static unsigned long Total_flash_reads_for_mapping_per_stream[MAX_SUPPORT_STREAMS], Total_flash_writes_for_mapping_per_stream[MAX_SUPPORT_STREAMS];
+		static unsigned long Read_NO_PPA_mapping_creations_per_stream[MAX_SUPPORT_STREAMS];
 
 		static unsigned int CMT_hits, readTR_CMT_hits, writeTR_CMT_hits;
 		static unsigned int CMT_miss, readTR_CMT_miss, writeTR_CMT_miss;

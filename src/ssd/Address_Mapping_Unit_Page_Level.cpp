@@ -587,6 +587,8 @@ namespace SSD_Components
 
 		if (transaction->Type == Transaction_Type::READ) {
 			if (ppa == NO_PPA) {
+				Stats::Read_NO_PPA_mapping_creations++;
+				Stats::Read_NO_PPA_mapping_creations_per_stream[streamID]++;
 				ppa = online_create_entry_for_reads(transaction->LPA, streamID, transaction->Address, ((NVM_Transaction_Flash_RD*)transaction)->read_sectors_bitmap);
 			}
 			transaction->PPA = ppa;

@@ -22,8 +22,10 @@ namespace SSD_Components
 	unsigned long Stats::IssuedSuspendEraseCMD = 0;
 	unsigned long Stats::Total_flash_reads_for_mapping = 0;
 	unsigned long Stats::Total_flash_writes_for_mapping = 0;
+	unsigned long Stats::Read_NO_PPA_mapping_creations = 0;
 	unsigned long Stats::Total_flash_reads_for_mapping_per_stream[MAX_SUPPORT_STREAMS] = { 0 };
 	unsigned long Stats::Total_flash_writes_for_mapping_per_stream[MAX_SUPPORT_STREAMS] = { 0 };
+	unsigned long Stats::Read_NO_PPA_mapping_creations_per_stream[MAX_SUPPORT_STREAMS] = { 0 };
 	unsigned int***** Stats::Block_erase_histogram;
 	unsigned int  Stats::CMT_hits = 0, Stats::readTR_CMT_hits = 0, Stats::writeTR_CMT_hits = 0;
 	unsigned int  Stats::CMT_miss = 0, Stats::readTR_CMT_miss = 0, Stats::writeTR_CMT_miss = 0;
@@ -65,7 +67,8 @@ namespace SSD_Components
 		IssuedProgramCMD = 0; IssuedInterleaveProgramCMD = 0; IssuedMultiplaneProgramCMD = 0; IssuedMultiplaneCopybackProgramCMD = 0; IssuedInterleaveMultiplaneProgramCMD = 0; IssuedSuspendProgramCMD = 0; IssuedCopybackProgramCMD = 0;
 		IssuedEraseCMD = 0; IssuedInterleaveEraseCMD = 0; IssuedMultiplaneEraseCMD = 0; IssuedInterleaveMultiplaneEraseCMD = 0;
 		IssuedSuspendEraseCMD = 0;
-		Total_flash_reads_for_mapping = 0; Total_flash_writes_for_mapping = 0; 
+		Total_flash_reads_for_mapping = 0; Total_flash_writes_for_mapping = 0;
+		Read_NO_PPA_mapping_creations = 0;
 		CMT_hits = 0; readTR_CMT_hits = 0; writeTR_CMT_hits = 0;
 		CMT_miss = 0; readTR_CMT_miss = 0; writeTR_CMT_miss = 0;
 		total_CMT_queries = 0; total_readTR_CMT_queries = 0; total_writeTR_CMT_queries = 0;
@@ -76,6 +79,7 @@ namespace SSD_Components
 		for (stream_id_type stream_id = 0; stream_id < MAX_SUPPORT_STREAMS; stream_id++) {
 			Total_flash_reads_for_mapping_per_stream[stream_id] = 0;
 			Total_flash_writes_for_mapping_per_stream[stream_id] = 0;
+			Read_NO_PPA_mapping_creations_per_stream[stream_id] = 0;
 			CMT_hits_per_stream[stream_id] = 0; readTR_CMT_hits_per_stream[stream_id] = 0; writeTR_CMT_hits_per_stream[stream_id] = 0;
 			CMT_miss_per_stream[stream_id] = 0; readTR_CMT_miss_per_stream[stream_id] = 0;  writeTR_CMT_miss_per_stream[stream_id] = 0;
 			total_CMT_queries_per_stream[stream_id] = 0; total_readTR_CMT_queries_per_stream[stream_id] = 0; total_writeTR_CMT_queries_per_stream[stream_id] = 0;

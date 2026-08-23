@@ -869,6 +869,10 @@ namespace SSD_Components
 		val = std::to_string(Stats::total_writeTR_CMT_queries);
 		xmlwriter.Write_attribute_string_inline(attr, val);
 
+		attr = "Read_NO_PPA_Mapping_Creations";
+		val = std::to_string(Stats::Read_NO_PPA_mapping_creations);
+		xmlwriter.Write_attribute_string_inline(attr, val);
+
 		attr = "Total_GC_Executions";
 		val = std::to_string(Stats::Total_gc_executions);
 		xmlwriter.Write_attribute_string_inline(attr, val);
