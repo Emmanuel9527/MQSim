@@ -12,7 +12,7 @@
 		<Enabled_Preconditioning>false</Enabled_Preconditioning>
 		<Memory_Type>FLASH</Memory_Type>
 		<HostInterface_Type>NVME</HostInterface_Type>
-		<IO_Queue_Depth>65535</IO_Queue_Depth>
+		<IO_Queue_Depth>1024</IO_Queue_Depth>
 		<Queue_Fetch_Size>512</Queue_Fetch_Size>
 		<Caching_Mechanism>ADVANCED</Caching_Mechanism>
 		<Data_Cache_Sharing_Mode>SHARED</Data_Cache_Sharing_Mode>
@@ -59,7 +59,7 @@
 			<Block_PE_Cycles_Limit>10000</Block_PE_Cycles_Limit>
 			<Suspend_Erase_Time>700000</Suspend_Erase_Time>
 			<Suspend_Program_Time>100000</Suspend_Program_Time>
-			<Die_No_Per_Chip>2</Die_No_Per_Chip>
+			<Die_No_Per_Chip>1</Die_No_Per_Chip>
 			<Plane_No_Per_Die>2</Plane_No_Per_Die>
 			<Block_No_Per_Plane>2048</Block_No_Per_Plane>
 			<Page_No_Per_Block>256</Page_No_Per_Block>
