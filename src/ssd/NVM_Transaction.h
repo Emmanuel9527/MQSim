@@ -29,6 +29,16 @@ namespace SSD_Components
 		/* Used to calculate service time and transfer time for a normal read/program operation used to respond to the host IORequests.
 		In other words, these variables are not important if FlashTransactions is used for garbage collection.*/
 		sim_time_type STAT_execution_time, STAT_transfer_time;
+		sim_time_type STAT_tsu_enqueue_time = INVALID_TIME;
+		sim_time_type STAT_tsu_dequeue_time = INVALID_TIME;
+		sim_time_type STAT_phy_issue_time = INVALID_TIME;
+		sim_time_type STAT_cmd_xfer_start_time = INVALID_TIME;
+		sim_time_type STAT_cmd_xfer_end_time = INVALID_TIME;
+		sim_time_type STAT_die_exec_start_time = INVALID_TIME;
+		sim_time_type STAT_die_exec_end_time = INVALID_TIME;
+		sim_time_type STAT_data_xfer_start_time = INVALID_TIME;
+		sim_time_type STAT_data_xfer_end_time = INVALID_TIME;
+		sim_time_type STAT_completion_time = INVALID_TIME;
 	};
 }
 

@@ -1,4 +1,6 @@
 #include <stdexcept>
+#include <algorithm>
+#include <cinttypes>
 #include "../sim/Engine.h"
 #include "NVM_PHY_ONFI_NVDDR2.h"
 #include "Stats.h"
@@ -192,16 +194,30 @@ namespace SSD_Components {
 
 				for (std::list<NVM_Transaction_Flash*>::iterator it = transaction_list.begin();
 					it != transaction_list.end(); it++) {
+					(*it)->STAT_phy_issue_time = Simulator->Time();
+				}
+				for (std::list<NVM_Transaction_Flash*>::iterator it = transaction_list.begin();
+					it != transaction_list.end(); it++) {
 					(*it)->STAT_transfer_time += target_channel->ReadCommandTime[transaction_list.size()];
 				}
 				if (chipBKE->OngoingDieCMDTransfers.size() == 0) {
+					for (std::list<NVM_Transaction_Flash*>::iterator it = transaction_list.begin();
+						it != transaction_list.end(); it++) {
+						(*it)->STAT_cmd_xfer_start_time = Simulator->Time() + suspendTime;
+						(*it)->STAT_cmd_xfer_end_time = Simulator->Time() + suspendTime + target_channel->ReadCommandTime[transaction_list.size()];
+					}
 					targetChip->StartCMDXfer();
 					chipBKE->Status = ChipStatus::CMD_IN;
 					chipBKE->Last_transfer_finish_time = Simulator->Time() + suspendTime + target_channel->ReadCommandTime[transaction_list.size()];
 					Simulator->Register_sim_event(Simulator->Time() + suspendTime + target_channel->ReadCommandTime[transaction_list.size()], this,
 						dieBKE, (int)NVDDR2_SimEventType::READ_CMD_ADDR_TRANSFERRED);
 				} else {
-					dieBKE->DieInterleavedTime = suspendTime + target_channel->ReadCommandTime[transaction_list.size()];
+						dieBKE->DieInterleavedTime = suspendTime + target_channel->ReadCommandTime[transaction_list.size()];
+					for (std::list<NVM_Transaction_Flash*>::iterator it = transaction_list.begin();
+						it != transaction_list.end(); it++) {
+						(*it)->STAT_cmd_xfer_start_time = chipBKE->Last_transfer_finish_time;
+						(*it)->STAT_cmd_xfer_end_time = chipBKE->Last_transfer_finish_time + dieBKE->DieInterleavedTime;
+					}
 					chipBKE->Last_transfer_finish_time += suspendTime + target_channel->ReadCommandTime[transaction_list.size()];
 				}
 				chipBKE->OngoingDieCMDTransfers.push(dieBKE);
@@ -348,6 +364,8 @@ namespace SSD_Components {
 				//DEBUG2("Chip " << targetChip->ChannelID << ", " << targetChip->ChipID << ", " << dieBKE->ActiveTransactions.front()->Address.DieID << ": READ_CMD_ADDR_TRANSFERRED ")
 				targetChip->EndCMDXfer(dieBKE->ActiveCommand);
 				for (auto tr : dieBKE->ActiveTransactions) {
+					tr->STAT_die_exec_start_time = Simulator->Time();
+					tr->STAT_die_exec_end_time = dieBKE->Expected_finish_time;
 					tr->STAT_execution_time = dieBKE->Expected_finish_time - Simulator->Time();
 				}
 				chipBKE->OngoingDieCMDTransfers.pop();
@@ -398,6 +416,9 @@ namespace SSD_Components {
 				//DEBUG2("Chip " << targetChip->ChannelID << ", " << targetChip->ChipID << ", " << dieBKE->ActiveTransactions.front()->Address.DieID << ": READ_DATA_TRANSFERRED ")
 				targetChip->EndDataOutXfer(dieBKE->ActiveCommand);
 				copy_read_data_to_transaction((NVM_Transaction_Flash_RD*)dieBKE->ActiveTransfer, dieBKE->ActiveCommand);
+				dieBKE->ActiveTransfer->STAT_completion_time = Simulator->Time();
+				dieBKE->ActiveTransfer->STAT_data_xfer_end_time = Simulator->Time();
+				record_read_transaction_timing(dieBKE->ActiveTransfer);
 	#if 0
 				if (tr->ExecutionMode != ExecutionModeType::COPYBACK)
 	#endif
@@ -506,6 +527,7 @@ namespace SSD_Components {
 			for (std::list<NVM_Transaction_Flash*>::iterator it = dieBKE->ActiveTransactions.begin();
 				it != dieBKE->ActiveTransactions.end(); it++)
 			{
+				(*it)->STAT_die_exec_end_time = Simulator->Time();
 				chipBKE->WaitingReadTXCount++;
 				if (_my_instance->channels[chip->ChannelID]->GetStatus() == BusChannelStatus::IDLE)
 					_my_instance->transfer_read_data_from_chip(chipBKE, dieBKE, (*it));
@@ -626,6 +648,8 @@ namespace SSD_Components {
 	{
 		//DEBUG2("Chip " << tr->Address.ChannelID << ", " << tr->Address.ChipID << ": transfer read data started for LPA: " << tr->LPA)
 		dieBKE->ActiveTransfer = tr;
+		tr->STAT_data_xfer_start_time = Simulator->Time();
+		tr->STAT_data_xfer_end_time = Simulator->Time() + NVDDR2DataOutTransferTime(tr->Data_and_metadata_size_in_byte, channels[tr->Address.ChannelID]);
 		channels[tr->Address.ChannelID]->Chips[tr->Address.ChipID]->StartDataOutXfer();
 		chipBKE->Status = ChipStatus::DATA_OUT;
 		Simulator->Register_sim_event(Simulator->Time() + NVDDR2DataOutTransferTime(tr->Data_and_metadata_size_in_byte, channels[tr->Address.ChannelID]),
@@ -703,5 +727,92 @@ namespace SSD_Components {
 			}
 
 		}
+	}
+
+	static uint64_t safe_delta(sim_time_type end, sim_time_type start)
+	{
+		if (end == INVALID_TIME || start == INVALID_TIME || end < start)
+			return 0;
+		return end - start;
+	}
+
+	void NVM_PHY_ONFI_NVDDR2::record_read_transaction_timing(NVM_Transaction_Flash* tr)
+	{
+		if (tr == NULL || tr->Type != Transaction_Type::READ)
+			return;
+
+		ReadTimingStats *stats = &other_read_timing_stats;
+		if (tr->Source == Transaction_Source_Type::USERIO || tr->Source == Transaction_Source_Type::CACHE)
+			stats = &user_read_timing_stats;
+		else if (tr->Source == Transaction_Source_Type::MAPPING)
+			stats = &mapping_read_timing_stats;
+
+		uint64_t cmd_xfer = safe_delta(tr->STAT_cmd_xfer_end_time, tr->STAT_cmd_xfer_start_time);
+		uint64_t die_exec = safe_delta(tr->STAT_die_exec_end_time, tr->STAT_die_exec_start_time);
+		uint64_t data_xfer = safe_delta(tr->STAT_data_xfer_end_time, tr->STAT_data_xfer_start_time);
+		uint64_t data_out_wait = safe_delta(tr->STAT_data_xfer_start_time, tr->STAT_die_exec_end_time);
+		uint64_t submit_to_tsu_enqueue = safe_delta(tr->STAT_tsu_enqueue_time, tr->Issue_time);
+		uint64_t tsu_wait = safe_delta(tr->STAT_tsu_dequeue_time, tr->STAT_tsu_enqueue_time);
+		uint64_t submit_to_tsu_dequeue = safe_delta(tr->STAT_tsu_dequeue_time, tr->Issue_time);
+		uint64_t dispatch_to_complete = safe_delta(tr->STAT_completion_time, tr->STAT_tsu_dequeue_time);
+		uint64_t issue_to_complete = safe_delta(tr->STAT_completion_time, tr->STAT_phy_issue_time);
+		uint64_t tsu_to_phy_issue = safe_delta(tr->STAT_phy_issue_time, tr->STAT_tsu_dequeue_time);
+
+		stats->count++;
+		stats->cmd_xfer_sum += cmd_xfer;
+		stats->die_exec_sum += die_exec;
+		stats->data_xfer_sum += data_xfer;
+		stats->data_out_wait_sum += data_out_wait;
+		stats->submit_to_tsu_enqueue_sum += submit_to_tsu_enqueue;
+		stats->tsu_wait_sum += tsu_wait;
+		stats->submit_to_tsu_dequeue_sum += submit_to_tsu_dequeue;
+		stats->dispatch_to_complete_sum += dispatch_to_complete;
+		stats->issue_to_complete_sum += issue_to_complete;
+		stats->tsu_to_phy_issue_sum += tsu_to_phy_issue;
+		stats->max_dispatch_to_complete = std::max(stats->max_dispatch_to_complete, dispatch_to_complete);
+		stats->dispatch_to_complete_values.push_back(dispatch_to_complete);
+	}
+
+	void NVM_PHY_ONFI_NVDDR2::print_one_read_timing_stats(FILE *out, const char *label, const ReadTimingStats& stats) const
+	{
+		auto avg_us = [&](uint64_t sum) -> double {
+			return stats.count == 0 ? 0.0 : (double)sum / (double)stats.count / 1000.0;
+		};
+		double p99_us = 0.0;
+		if (!stats.dispatch_to_complete_values.empty()) {
+			std::vector<sim_time_type> sorted = stats.dispatch_to_complete_values;
+			std::sort(sorted.begin(), sorted.end());
+			size_t index = (size_t)((double)(sorted.size() - 1) * 0.99);
+			p99_us = (double)sorted[index] / 1000.0;
+		}
+
+		fprintf(out, "%16s %12" PRIu64 " %16.2f %14.2f %17.2f %14.2f %14.2f %14.2f %14.2f %14.2f %14.2f %14.2f %14.2f %14.2f\n",
+			label,
+			stats.count,
+			avg_us(stats.submit_to_tsu_enqueue_sum),
+			avg_us(stats.tsu_wait_sum),
+			avg_us(stats.submit_to_tsu_dequeue_sum),
+			avg_us(stats.cmd_xfer_sum),
+			avg_us(stats.die_exec_sum),
+			avg_us(stats.data_xfer_sum),
+			avg_us(stats.data_out_wait_sum),
+			avg_us(stats.tsu_to_phy_issue_sum),
+			avg_us(stats.issue_to_complete_sum),
+			avg_us(stats.dispatch_to_complete_sum),
+			p99_us,
+			(double)stats.max_dispatch_to_complete / 1000.0);
+	}
+
+	void NVM_PHY_ONFI_NVDDR2::Print_read_timing_breakdown(FILE *out) const
+	{
+		fprintf(out, "MQSim read timing breakdown table:\n");
+		fprintf(out, "%16s %12s %16s %14s %17s %14s %14s %14s %14s %14s %14s %14s %14s %14s\n",
+			"Type", "Count", "Submit2TSUEnq", "TSUWait(us)", "Submit2TSUDeq",
+			"CmdXfer(us)", "DieExec(us)", "DataXfer(us)",
+			"DataWait(us)", "TSU2PHY(us)", "Issue2Done(us)", "Dispatch2Done", "D2D_P99(us)", "D2D_Max(us)");
+		fprintf(out, "====================================================================================================================================================================================================================\n");
+		print_one_read_timing_stats(out, "user_read", user_read_timing_stats);
+		print_one_read_timing_stats(out, "mapping_read", mapping_read_timing_stats);
+		print_one_read_timing_stats(out, "other_read", other_read_timing_stats);
 	}
 }

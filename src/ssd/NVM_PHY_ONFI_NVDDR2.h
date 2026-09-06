@@ -3,6 +3,9 @@
 
 #include <queue>
 #include <list>
+#include <vector>
+#include <cstdint>
+#include <stdio.h>
 #include "../sim/Sim_Defs.h"
 #include "../nvm_chip/flash_memory/FlashTypes.h"
 #include "../nvm_chip/flash_memory/Flash_Command.h"
@@ -108,10 +111,29 @@ namespace SSD_Components
 		NVM_Transaction_Flash* Is_chip_busy_with_stream(NVM_Transaction_Flash* transaction);
 		bool Is_chip_busy(NVM_Transaction_Flash* transaction);
 		void Change_memory_status_preconditioning(const NVM::NVM_Memory_Address* address, const void* status_info);
+		void Print_read_timing_breakdown(FILE *out) const;
 	private:
+		struct ReadTimingStats {
+			uint64_t count = 0;
+			uint64_t cmd_xfer_sum = 0;
+			uint64_t die_exec_sum = 0;
+			uint64_t data_xfer_sum = 0;
+			uint64_t data_out_wait_sum = 0;
+			uint64_t submit_to_tsu_enqueue_sum = 0;
+			uint64_t tsu_wait_sum = 0;
+			uint64_t submit_to_tsu_dequeue_sum = 0;
+			uint64_t dispatch_to_complete_sum = 0;
+			uint64_t issue_to_complete_sum = 0;
+			uint64_t tsu_to_phy_issue_sum = 0;
+			uint64_t max_dispatch_to_complete = 0;
+			std::vector<sim_time_type> dispatch_to_complete_values;
+		};
+
 		void transfer_read_data_from_chip(ChipBookKeepingEntry* chipBKE, DieBookKeepingEntry* dieBKE, NVM_Transaction_Flash* tr);
 		void perform_interleaved_cmd_data_transfer(NVM::FlashMemory::Flash_Chip* chip, DieBookKeepingEntry* bookKeepingEntry);
 		void send_resume_command_to_chip(NVM::FlashMemory::Flash_Chip* chip, ChipBookKeepingEntry* chipBKE);
+		void record_read_transaction_timing(NVM_Transaction_Flash* tr);
+		void print_one_read_timing_stats(FILE *out, const char *label, const ReadTimingStats& stats) const;
 		static void handle_ready_signal_from_chip(NVM::FlashMemory::Flash_Chip* chip, NVM::FlashMemory::Flash_Command* command);
 
 		static NVM_PHY_ONFI_NVDDR2* _my_instance;
@@ -119,6 +141,9 @@ namespace SSD_Components
 		ChipBookKeepingEntry** bookKeepingTable;
 		Flash_Transaction_Queue *WaitingReadTX, *WaitingGCRead_TX, *WaitingMappingRead_TX;
 		std::list<DieBookKeepingEntry*> *WaitingCopybackWrites;
+		ReadTimingStats user_read_timing_stats;
+		ReadTimingStats mapping_read_timing_stats;
+		ReadTimingStats other_read_timing_stats;
 	};
 }
 

@@ -117,6 +117,25 @@ namespace NVM
 			sim_time_type GetSuspendProgramTime();
 			sim_time_type GetSuspendEraseTime();
 			void Report_results_in_XML(std::string name_prefix, Utils::XmlWriter& xmlwriter);
+			double Get_execution_utilization() const
+			{
+				if (Simulator->Time() == 0)
+					return 0.0;
+				sim_time_type exec_time = STAT_totalExecTime;
+				if (status != Internal_Status::IDLE)
+					exec_time += Simulator->Time() - executionStartTime;
+				return (double)exec_time / (double)Simulator->Time();
+			}
+			double Get_transfer_utilization() const
+			{
+				if (Simulator->Time() == 0)
+					return 0.0;
+				return (double)STAT_totalXferTime / (double)Simulator->Time();
+			}
+			unsigned int Get_idle_die_count() const
+			{
+				return idleDieNo;
+			}
 			LPA_type Get_metadata(flash_die_ID_type die_id, flash_plane_ID_type plane_id, flash_block_ID_type block_id, flash_page_ID_type page_id);//A simplification to decrease the complexity of GC execution! The GC unit may need to know the metadata of a page to decide if a page is valid or invalid. 
 		private:
 			Flash_Technology_Type flash_technology;

@@ -13,20 +13,41 @@ namespace SSD_Components
 		this->id = id;
 	}
 
+	Flash_Transaction_Queue::QueueStats Flash_Transaction_Queue::Get_stats()
+	{
+		QueueStats stats;
+		stats.id = id;
+		stats.enqueued = RequestQueueProbe.NRequests();
+		stats.dequeued = RequestQueueProbe.NDepartures();
+		stats.current_length = RequestQueueProbe.QueueLength();
+		stats.avg_length = RequestQueueProbe.AvgQueueLength();
+		stats.max_length = RequestQueueProbe.MaxQueueLength();
+		stats.stdev_length = RequestQueueProbe.STDevQueueLength();
+		stats.avg_wait_us = RequestQueueProbe.AvgWaitingTime();
+		stats.max_wait_us = RequestQueueProbe.MaxWaitingTime();
+		return stats;
+	}
+
 	void Flash_Transaction_Queue::push_back(NVM_Transaction_Flash* const& transaction)
 	{
+		if (transaction->STAT_tsu_enqueue_time == INVALID_TIME)
+			transaction->STAT_tsu_enqueue_time = Simulator->Time();
 		RequestQueueProbe.EnqueueRequest(transaction);
 		return list<NVM_Transaction_Flash*>::push_back(transaction);
 	}
 
 	void Flash_Transaction_Queue::push_front(NVM_Transaction_Flash* const& transaction)
 	{
+		if (transaction->STAT_tsu_enqueue_time == INVALID_TIME)
+			transaction->STAT_tsu_enqueue_time = Simulator->Time();
 		RequestQueueProbe.EnqueueRequest(transaction);
 		return list<NVM_Transaction_Flash*>::push_front(transaction);
 	}
 
 	std::list<NVM_Transaction_Flash*>::iterator Flash_Transaction_Queue::insert(list<NVM_Transaction_Flash*>::iterator position, NVM_Transaction_Flash* const& transaction)
 	{
+		if (transaction->STAT_tsu_enqueue_time == INVALID_TIME)
+			transaction->STAT_tsu_enqueue_time = Simulator->Time();
 		RequestQueueProbe.EnqueueRequest(transaction);
 		return list<NVM_Transaction_Flash*>::insert(position, transaction);
 	}

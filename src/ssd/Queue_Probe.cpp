@@ -34,9 +34,10 @@ namespace SSD_Components
 
 		if (transaction == NULL)
 			throw std::logic_error("Object can not be null if accurateTimingEnabled=ture");
+		sim_time_type now = Simulator->Time();
 		sim_time_type et = currentObjectsInQueue[transaction];
 		currentObjectsInQueue.erase(transaction);
-		sim_time_type tc = Simulator->Time() - et;
+		sim_time_type tc = now >= et ? now - et : 0;
 		totalWaitingTime += tc;
 		if (tc > maxWaitingTime)
 			maxWaitingTime = tc;
@@ -47,8 +48,9 @@ namespace SSD_Components
 	void Queue_Probe::setCount(int val)
 	{
 		sim_time_type n = Simulator->Time();
-		states[count].totalTime += n - lastCountChange;
-		statesEpoch[count].totalTime += n - lastCountChange;
+		sim_time_type elapsed = n >= lastCountChange ? n - lastCountChange : 0;
+		states[count].totalTime += elapsed;
+		statesEpoch[count].totalTime += elapsed;
 
 		lastCountChange = n;
 		count = val;
@@ -92,9 +94,10 @@ namespace SSD_Components
 			sim_time_type now = Simulator->Time();
 			sim_time_type t = states[i].totalTime;
 			if (count == i) {
-				t += now - lastCountChange;
+				t += now >= lastCountChange ? now - lastCountChange : 0;
 			}
-			double r = (double)t / (double)(now - lastCountChangeReference);
+			sim_time_type elapsed = now >= lastCountChangeReference ? now - lastCountChangeReference : 0;
+			double r = elapsed == 0 ? 0.0 : (double)t / (double)elapsed;
 			writer.Write_attribute_string("QueueLength", std::to_string(i));
 			writer.Write_attribute_string("nEnterances", std::to_string(states[i].nEnterances));
 			writer.Write_attribute_string("totalTime", std::to_string(t));
@@ -131,6 +134,8 @@ namespace SSD_Components
 
 	double Queue_Probe::AvgQueueLength()
 	{
+		if (Simulator->Time() == 0)
+			return 0;
 		sim_time_type sum = 0;
 		for (unsigned int len = 0; len < states.size(); len++)
 			sum += states[len].totalTime * len;
@@ -139,6 +144,8 @@ namespace SSD_Components
 
 	double Queue_Probe::STDevQueueLength()
 	{
+		if (Simulator->Time() == 0)
+			return 0;
 		sim_time_type sum = 0;
 		for (unsigned int len = 0; len < states.size(); len++) {
 			sum += states[len].totalTime * len;
@@ -154,6 +161,8 @@ namespace SSD_Components
 
 	double Queue_Probe::AvgQueueLengthEpoch()
 	{
+		if (Simulator->Time() <= epochStartTime)
+			return 0;
 		sim_time_type sum = 0;
 		sim_time_type sumTime = 0;
 		for (unsigned int len = 0; len < states.size(); len++) {

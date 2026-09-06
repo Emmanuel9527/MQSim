@@ -69,6 +69,13 @@ namespace SSD_Components
 	{
 	}
 
+	void TSU_Base::Print_internal_queue_stats(FILE *out, bool full, size_t top_n)
+	{
+		(void)full;
+		(void)top_n;
+		fprintf(out, "MQSim internal queue stats: unavailable for this TSU policy\n");
+	}
+
 	bool TSU_Base::issue_command_to_chip(Flash_Transaction_Queue *sourceQueue1, Flash_Transaction_Queue *sourceQueue2, Transaction_Type transactionType, bool suspensionRequired)
 	{
 		flash_die_ID_type dieID = sourceQueue1->front()->Address.DieID;
@@ -89,6 +96,7 @@ namespace SSD_Components
 					if (planeVector == 0 || (*it)->Address.PageID == pageID)
 					{
 						(*it)->SuspendRequired = suspensionRequired;
+						(*it)->STAT_tsu_dequeue_time = Simulator->Time();
 						planeVector |= 1 << (*it)->Address.PlaneID;
 						transaction_dispatch_slots.push_back(*it);
 						DEBUG(issueCntr++ << ": " << Simulator->Time() <<" Issueing Transaction - Type:" << TRTOSTR((*it)) << ", PPA:" << (*it)->PPA << ", LPA:" << (*it)->LPA << ", Channel: " << (*it)->Address.ChannelID << ", Chip: " << (*it)->Address.ChipID);
@@ -109,6 +117,7 @@ namespace SSD_Components
 						if (planeVector == 0 || (*it)->Address.PageID == pageID)
 						{
 							(*it)->SuspendRequired = suspensionRequired;
+							(*it)->STAT_tsu_dequeue_time = Simulator->Time();
 							planeVector |= 1 << (*it)->Address.PlaneID;
 							transaction_dispatch_slots.push_back(*it);
 							DEBUG(issueCntr++ << ": " << Simulator->Time() << " Issueing Transaction - Type:" << TRTOSTR((*it)) << ", PPA:" << (*it)->PPA << ", LPA:" << (*it)->LPA << ", Channel: " << (*it)->Address.ChannelID << ", Chip: " << (*it)->Address.ChipID);

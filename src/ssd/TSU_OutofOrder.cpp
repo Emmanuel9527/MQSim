@@ -1,4 +1,6 @@
 #include "TSU_OutofOrder.h"
+#include <algorithm>
+#include <vector>
 
 namespace SSD_Components
 {
@@ -140,6 +142,54 @@ void TSU_OutOfOrder::Report_results_in_XML(std::string name_prefix, Utils::XmlWr
 
 	xmlwriter.Write_close_tag();
 }
+
+void TSU_OutOfOrder::Print_internal_queue_stats(FILE *out, bool full, size_t top_n)
+{
+	std::vector<Flash_Transaction_Queue::QueueStats> stats;
+
+		for (unsigned int channelID = 0; channelID < channel_count; channelID++) {
+			for (unsigned int chipID = 0; chipID < chip_no_per_channel; chipID++) {
+				stats.push_back(UserReadTRQueue[channelID][chipID].Get_stats());
+				stats.push_back(UserWriteTRQueue[channelID][chipID].Get_stats());
+				stats.push_back(MappingReadTRQueue[channelID][chipID].Get_stats());
+				stats.push_back(MappingWriteTRQueue[channelID][chipID].Get_stats());
+				stats.push_back(GCReadTRQueue[channelID][chipID].Get_stats());
+				stats.push_back(GCWriteTRQueue[channelID][chipID].Get_stats());
+				stats.push_back(GCEraseTRQueue[channelID][chipID].Get_stats());
+			}
+		}
+
+		stats.erase(std::remove_if(stats.begin(), stats.end(),
+			[](const Flash_Transaction_Queue::QueueStats& entry) {
+				return entry.enqueued == 0 && entry.current_length == 0 && entry.max_length == 0;
+			}), stats.end());
+
+		std::sort(stats.begin(), stats.end(),
+			[](const Flash_Transaction_Queue::QueueStats& a, const Flash_Transaction_Queue::QueueStats& b) {
+				if (a.max_wait_us != b.max_wait_us)
+					return a.max_wait_us > b.max_wait_us;
+				if (a.avg_wait_us != b.avg_wait_us)
+					return a.avg_wait_us > b.avg_wait_us;
+				return a.max_length > b.max_length;
+			});
+
+		size_t limit = full ? stats.size() : std::min(top_n, stats.size());
+		fprintf(out, "MQSim internal queue congestion table%s:\n",
+			full ? "" : " (top queues by max wait)");
+		fprintf(out, "%-52s %10s %10s %8s %10s %8s %10s %12s %12s\n",
+			"Queue", "Enqueued", "Dequeued", "CurLen", "AvgQLen", "MaxQLen", "StdQLen", "AvgWait(us)", "MaxWait(us)");
+		fprintf(out, "================================================================================================================================================\n");
+		for (size_t i = 0; i < limit; i++) {
+			const Flash_Transaction_Queue::QueueStats& s = stats[i];
+			fprintf(out, "%-52s %10lu %10lu %8d %10.2f %8u %10.2f %12llu %12llu\n",
+				s.id.c_str(), s.enqueued, s.dequeued, s.current_length,
+				s.avg_length, s.max_length, s.stdev_length,
+				(unsigned long long)s.avg_wait_us,
+				(unsigned long long)s.max_wait_us);
+		}
+		if (stats.empty())
+			fprintf(out, "(no TSU queue activity recorded yet)\n");
+	}
 
 void TSU_OutOfOrder::Schedule()
 {

@@ -11,11 +11,14 @@
 #include "src/exec/IO_Flow_Parameter_Set.h"
 #include "src/exec/SSD_Device.h"
 #include "src/sim/Engine.h"
+#include "src/ssd/FTL.h"
 #include "src/ssd/Host_Interface_NVMe.h"
 #include "src/ssd/NVM_PHY_ONFI.h"
+#include "src/ssd/NVM_PHY_ONFI_NVDDR2.h"
 #include "src/ssd/NVM_Transaction_Flash.h"
 #include "src/ssd/SSD_Defs.h"
 #include "src/ssd/Stats.h"
+#include "src/ssd/TSU_Base.h"
 #include "src/utils/rapidxml/rapidxml.hpp"
 
 MQSimNativeOnlineModel *MQSimNativeOnlineModel::active_instance = NULL;
@@ -213,6 +216,13 @@ bool MQSimNativeOnlineModel::submit_request(const nvmev_mqsim_io_msg& req)
 	pending->submit_time_ns = req.submit_time_ns;
 	pending->original = req;
 
+	while (Simulator->Has_pending_event() &&
+	       Simulator->Next_event_time() <= (sim_time_type)req.submit_time_ns) {
+		if (!Simulator->Run_next_event())
+			break;
+		events_run++;
+	}
+
 	Simulator->Fast_forward((sim_time_type)req.submit_time_ns);
 	request = host_interface->Submit_online_request(type, 0, req.slba, req.nlb,
 							(sim_time_type)req.submit_time_ns);
@@ -239,6 +249,40 @@ bool MQSimNativeOnlineModel::run_until_next_completion()
 	return completed_replies.size() > completed_before;
 }
 
+size_t MQSimNativeOnlineModel::run_completion_batch(sim_time_type completion_window_ns,
+						    sim_time_type *sim_time_advanced_ns)
+{
+	size_t completed_before = completed_replies.size();
+	sim_time_type start_time = Simulator->Time();
+	sim_time_type batch_until;
+
+	if (sim_time_advanced_ns)
+		*sim_time_advanced_ns = 0;
+
+	while (completed_replies.size() == completed_before && !pending_by_request.empty()) {
+		if (!Simulator->Run_next_event())
+			return 0;
+		events_run++;
+	}
+
+	if (completed_replies.size() == completed_before)
+		return 0;
+
+	batch_until = Simulator->Time() + completion_window_ns;
+	while (!pending_by_request.empty() &&
+	       Simulator->Has_pending_event() &&
+	       Simulator->Next_event_time() <= batch_until) {
+		if (!Simulator->Run_next_event())
+			break;
+		events_run++;
+	}
+
+	if (sim_time_advanced_ns)
+		*sim_time_advanced_ns = Simulator->Time() > start_time ?
+			Simulator->Time() - start_time : 0;
+	return completed_replies.size() - completed_before;
+}
+
 bool MQSimNativeOnlineModel::pop_completed_reply(nvmev_mqsim_io_msg *reply, std::string *trace)
 {
 	if (completed_replies.empty())
@@ -261,6 +305,11 @@ bool MQSimNativeOnlineModel::has_pending_requests() const
 size_t MQSimNativeOnlineModel::pending_count() const
 {
 	return pending_by_request.size();
+}
+
+size_t MQSimNativeOnlineModel::completed_reply_count() const
+{
+	return completed_replies.size();
 }
 
 uint64_t MQSimNativeOnlineModel::submit_and_drain(const nvmev_mqsim_io_msg& req)
@@ -362,6 +411,14 @@ void MQSimNativeOnlineModel::print_stats(FILE *out) const
 		SSD_Components::Stats::readTR_CMT_miss,
 		SSD_Components::Stats::Total_flash_reads_for_mapping,
 		SSD_Components::Stats::Total_flash_writes_for_mapping);
+	if (ssd != NULL && ssd->Firmware != NULL) {
+		SSD_Components::FTL *ftl = (SSD_Components::FTL *)ssd->Firmware;
+		if (ftl->TSU != NULL)
+			ftl->TSU->Print_internal_queue_stats(out, true, 0);
+		SSD_Components::NVM_PHY_ONFI_NVDDR2 *phy = dynamic_cast<SSD_Components::NVM_PHY_ONFI_NVDDR2 *>(ftl->PHY);
+		if (phy != NULL)
+			phy->Print_read_timing_breakdown(out);
+	}
 	fprintf(out, "  channels:\n");
 	for (size_t i = 0; i < channel_read_ops.size(); i++) {
 		uint64_t ops = channel_read_ops[i] + channel_write_ops[i] + channel_erase_ops[i];
@@ -381,6 +438,23 @@ void MQSimNativeOnlineModel::print_stats(FILE *out) const
 			continue;
 		fprintf(out, "    lun=%zu ops=%" PRIu64 " pct=%.2f reads=%" PRIu64 " writes=%" PRIu64 " erases=%" PRIu64 "\n",
 			i, ops, pct, lun_read_ops[i], lun_write_ops[i], lun_erase_ops[i]);
+	}
+	if (ssd != NULL && ssd->PHY != NULL) {
+		SSD_Components::NVM_PHY_ONFI *phy = (SSD_Components::NVM_PHY_ONFI *)ssd->PHY;
+		fprintf(out, "MQSim chip busy timing table:\n");
+		fprintf(out, "%8s %8s %12s %12s %10s\n",
+			"Channel", "Chip", "ExecUtil(%)", "XferUtil(%)", "IdleDies");
+		fprintf(out, "============================================================\n");
+		for (uint32_t channel = 0; channel < channel_count; channel++) {
+			for (uint32_t chip = 0; chip < chips_per_channel; chip++) {
+				NVM::FlashMemory::Flash_Chip *flash_chip = phy->Get_chip(channel, chip);
+				fprintf(out, "%8u %8u %12.2f %12.2f %10u\n",
+					channel, chip,
+					100.0 * flash_chip->Get_execution_utilization(),
+					100.0 * flash_chip->Get_transfer_utilization(),
+					flash_chip->Get_idle_die_count());
+			}
+		}
 	}
 }
 
@@ -477,6 +551,14 @@ void MQSimNativeOnlineModel::print_compact_stats(FILE *out, size_t top_n) const
 		SSD_Components::Stats::readTR_CMT_miss,
 		SSD_Components::Stats::Total_flash_reads_for_mapping,
 		SSD_Components::Stats::Total_flash_writes_for_mapping);
+	if (ssd != NULL && ssd->Firmware != NULL) {
+		SSD_Components::FTL *ftl = (SSD_Components::FTL *)ssd->Firmware;
+		if (ftl->TSU != NULL)
+			ftl->TSU->Print_internal_queue_stats(out, false, top_n);
+		SSD_Components::NVM_PHY_ONFI_NVDDR2 *phy = dynamic_cast<SSD_Components::NVM_PHY_ONFI_NVDDR2 *>(ftl->PHY);
+		if (phy != NULL)
+			phy->Print_read_timing_breakdown(out);
+	}
 	fprintf(out, "  channel distribution: ideal=%.2f%% min=%.2f%% max=%.2f%% total_ops=%" PRIu64 "\n",
 		channels.empty() ? 0.0 : 100.0 / (double)channels.size(),
 		channel_min, channel_max, total_channel_ops);

@@ -31,9 +31,12 @@ public:
 	uint64_t estimate_latency_ns(const nvmev_mqsim_io_msg& req);
 	bool submit_request(const nvmev_mqsim_io_msg& req);
 	bool run_until_next_completion();
+	size_t run_completion_batch(sim_time_type completion_window_ns,
+				    sim_time_type *sim_time_advanced_ns = NULL);
 	bool pop_completed_reply(nvmev_mqsim_io_msg *reply, std::string *trace = NULL);
 	bool has_pending_requests() const;
 	size_t pending_count() const;
+	size_t completed_reply_count() const;
 	std::string describe() const;
 	const std::string& last_trace() const;
 	void print_stats(FILE *out) const;

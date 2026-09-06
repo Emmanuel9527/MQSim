@@ -1,6 +1,8 @@
 #ifndef TSU_H
 #define TSU_H
 
+#include <stdio.h>
+#include <stddef.h>
 #include <list>
 #include "../sim/Sim_Defs.h"
 #include "../sim/Sim_Object.h"
@@ -64,6 +66,7 @@ public:
 		*/
 	virtual void Schedule() = 0;
 	virtual void Report_results_in_XML(std::string name_prefix, Utils::XmlWriter &xmlwriter);
+	virtual void Print_internal_queue_stats(FILE *out, bool full, size_t top_n);
 
 protected:
 	FTL *ftl;
