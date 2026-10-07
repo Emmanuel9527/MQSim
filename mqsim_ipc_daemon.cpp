@@ -16,6 +16,7 @@
 #include <string>
 #include <time.h>
 #include <vector>
+#include <signal.h>
 
 #include "../nvmevirt/mqsim_ipc_protocol.h"
 #include "mqsim_native_online_model.h"
@@ -38,8 +39,22 @@ static uint64_t request_coalesce_max = 32;
 static bool event_stats = false;
 static uint64_t event_trace_first_events = 0;
 static bool stats_full = false;
+static volatile sig_atomic_t snapshot_requested = 0;
+static volatile sig_atomic_t stop_requested = 0;
+
+static void handle_signal(int signal_number)
+{
+	if (signal_number == SIGUSR1)
+		snapshot_requested = 1;
+	else
+		stop_requested = 1;
+}
 
 struct DaemonTimingStats {
+	uint64_t injection_count = 0;
+	uint64_t late_injection_count = 0;
+	uint64_t injection_ahead_total_ns = 0;
+	uint64_t injection_ahead_max_ns = 0;
 	uint64_t pop_delay_count = 0;
 	uint64_t pop_delay_total_ns = 0;
 	uint64_t pop_delay_max_ns = 0;
@@ -90,6 +105,13 @@ static uint64_t avg_or_zero(uint64_t total, uint64_t count)
 
 static void print_daemon_timing_stats(FILE *out)
 {
+	fprintf(out, "Injection timing (cumulative, excludes preload): requests=%" PRIu64
+		" late=%" PRIu64 " ahead_total_ns=%" PRIu64 " ahead_max_ns=%" PRIu64
+		" ahead_mean_ns=%.2f late_pct=%.2f\n",
+		daemon_timing_stats.injection_count, daemon_timing_stats.late_injection_count,
+		daemon_timing_stats.injection_ahead_total_ns, daemon_timing_stats.injection_ahead_max_ns,
+		daemon_timing_stats.injection_count ? (double)daemon_timing_stats.injection_ahead_total_ns / daemon_timing_stats.injection_count : 0.0,
+		daemon_timing_stats.injection_count ? 100.0 * daemon_timing_stats.late_injection_count / daemon_timing_stats.injection_count : 0.0);
 	fprintf(out, "MQSim daemon bridge timing table:\n");
 	fprintf(out, "%28s %12s %14s %14s\n", "Stage", "Count", "Avg(ns)", "Max(ns)");
 	fprintf(out, "====================================================================\n");
@@ -257,6 +279,13 @@ static bool handle_request(nvmev_mqsim_shm *shm,
 		uint64_t submit_ns;
 
 		record_pop_delay(req);
+		uint64_t ahead_ns = Simulator->Time() > req.submit_time_ns ?
+			Simulator->Time() - req.submit_time_ns : 0;
+		daemon_timing_stats.injection_count++;
+		if (ahead_ns > 0)
+			daemon_timing_stats.late_injection_count++;
+		daemon_timing_stats.injection_ahead_total_ns += ahead_ns;
+		update_max_u64(daemon_timing_stats.injection_ahead_max_ns, ahead_ns);
 		submit_begin_ns = monotonic_now_ns();
 		native_online_model.submit_request(req);
 		submit_ns = monotonic_now_ns() - submit_begin_ns;
@@ -547,8 +576,34 @@ int main(int argc, char **argv)
 
 	pfd.fd = fd;
 	pfd.events = POLLIN;
+	{
+	struct sigaction action = {};
+	action.sa_handler = handle_signal;
+	sigemptyset(&action.sa_mask);
+	sigaction(SIGUSR1, &action, NULL);
+	sigaction(SIGINT, &action, NULL);
+	sigaction(SIGTERM, &action, NULL);
+	}
+	printf("Daemon diagnostics ready: pid=%ld SIGUSR1=snapshot SIGINT/SIGTERM=final-snapshot-and-stop; coalesce_us=%" PRIu64 " coalesce_max=%" PRIu64 " completion_window_ns=%" PRIu64 "\n",
+	       (long)getpid(), request_coalesce_us, request_coalesce_max, completion_window_ns);
+	fflush(stdout);
 
 	while (true) {
+		if (snapshot_requested || stop_requested) {
+			snapshot_requested = 0;
+			printf("Diagnostic snapshot: wall_ns=%" PRIu64 " sim_ns=%llu final=%d (cumulative counters)\n",
+			       monotonic_now_ns(), (unsigned long long)Simulator->Time(), (int)stop_requested);
+			if (timing_model == TimingModel::NATIVE_ONLINE) {
+				if (stats_full)
+					native_online_model.print_stats(stdout);
+				else
+					native_online_model.print_compact_stats(stdout, stats_top_n);
+			}
+			print_daemon_timing_stats(stdout);
+			fflush(stdout);
+			if (stop_requested)
+				break;
+		}
 		int ready;
 		bool produced_response = false;
 		uint64_t handled_this_loop = 0;
@@ -635,7 +690,8 @@ int main(int argc, char **argv)
 		if (timing_model == TimingModel::NATIVE_ONLINE && native_online_model.has_pending_requests())
 			continue;
 
-		ready = poll(&pfd, 1, -1);
+		// Bounded wait also handles a signal arriving just before poll().
+		ready = poll(&pfd, 1, 100);
 		if (ready < 0) {
 			if (errno == EINTR)
 				continue;
