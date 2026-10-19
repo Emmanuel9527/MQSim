@@ -27,8 +27,13 @@ all: checkdirs MQSim MQSimIPCDaemon
 MQSim: $(OBJ)
 	$(LD) $^ -o $@
 
-MQSimIPCDaemon: mqsim_ipc_daemon.cpp mqsim_native_online_model.cpp mqsim_native_online_model.h $(LIB_OBJ)
-	$(CC) $(CC_FLAGS) $(INCLUDES) -I../nvmevirt mqsim_ipc_daemon.cpp mqsim_native_online_model.cpp $(LIB_OBJ) -o $@
+MQSimIPCDaemon: mqsim_ipc_daemon.cpp mqsim_native_online_model.cpp mqsim_native_online_model.h vuc_service.cpp vuc_service.h $(LIB_OBJ)
+	$(CC) $(CC_FLAGS) $(INCLUDES) -I../nvmevirt mqsim_ipc_daemon.cpp mqsim_native_online_model.cpp vuc_service.cpp $(LIB_OBJ) -o $@
+
+# Side-by-side build for the widened 15-page VUC reply; useful while an
+# older daemon binary is still running and holding MQSimIPCDaemon open.
+MQSimIPCDaemonV2: mqsim_ipc_daemon.cpp mqsim_native_online_model.cpp mqsim_native_online_model.h vuc_service.cpp vuc_service.h $(LIB_OBJ)
+	$(CC) $(CC_FLAGS) $(INCLUDES) -I../nvmevirt mqsim_ipc_daemon.cpp mqsim_native_online_model.cpp vuc_service.cpp $(LIB_OBJ) -o $@
 
 checkdirs: $(BUILD_DIR)
 
@@ -39,5 +44,17 @@ clean:
 	rm -rf $(BUILD_DIR)
 	rm -f MQSim
 	rm -f MQSimIPCDaemon
+	rm -f MQSimIPCDaemonV2
+	rm -f VUCTimingSmoke
+	rm -f VUCV2Benchmark
 
 $(foreach bdir,$(BUILD_DIR),$(eval $(call make-goal,$(bdir))))
+
+# Run with scripts/vuc/test_timing_model.py; no NVMe hardware is needed.
+VUCTimingSmoke: tests/vuc_timing_smoke.cpp vuc_service.cpp vuc_service.h mqsim_native_online_model.cpp $(LIB_OBJ)
+	$(CC) $(CC_FLAGS) $(INCLUDES) tests/vuc_timing_smoke.cpp vuc_service.cpp mqsim_native_online_model.cpp $(LIB_OBJ) -o $@
+
+# Independent host project must be built first (CMake). No socket transport.
+VUCANN_DIR ?= ../../vucann
+VUCV2Benchmark: tests/vuc_v2_benchmark.cpp vuc_service.cpp vuc_service.h mqsim_native_online_model.cpp $(VUCANN_DIR)/build/libvucann_core.a $(LIB_OBJ)
+	$(CC) $(CC_FLAGS) -std=c++17 $(INCLUDES) -I$(VUCANN_DIR)/include tests/vuc_v2_benchmark.cpp vuc_service.cpp mqsim_native_online_model.cpp $(VUCANN_DIR)/build/libvucann_core.a $(LIB_OBJ) -o $@

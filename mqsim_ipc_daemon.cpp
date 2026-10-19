@@ -8,18 +8,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <cstring>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 #include <sched.h>
+#include <algorithm>
 #include <string>
 #include <time.h>
+#include <memory>
+#include <map>
 #include <vector>
 #include <signal.h>
 
 #include "../nvmevirt/mqsim_ipc_protocol.h"
 #include "mqsim_native_online_model.h"
+#include "vuc_service.h"
 #include "src/sim/Engine.h"
 
 static uint64_t read_latency_ns = 75000;
@@ -39,6 +44,28 @@ static uint64_t request_coalesce_max = 32;
 static bool event_stats = false;
 static uint64_t event_trace_first_events = 0;
 static bool stats_full = false;
+static std::string vuc_trace_path;
+static std::string vuc_neighbor_path;
+static std::string vuc_vector_path;
+static std::string vuc_node_map_path;
+static std::string vuc_vector_map_path;
+static std::string vuc_neighbor_lba_map_path;
+static std::string vuc_vector_lba_map_path;
+static uint64_t vuc_input_dma_ns_per_4k = VUCServiceConfig{}.input_dma_ns_per_4k;
+static uint64_t vuc_idma_ns_per_4k = VUCServiceConfig{}.idma_ns_per_4k;
+static uint64_t vuc_parse_ns_per_id = VUCServiceConfig{}.neighbor_parse_ns_per_id;
+static uint64_t vuc_dsp_ns_per_component = VUCServiceConfig{}.dsp_ns_per_float_component;
+static uint64_t vuc_output_dma_ns_per_4k = VUCServiceConfig{}.output_dma_ns_per_4k;
+static uint64_t vuc_max_async_reads = 16;
+static uint64_t vuc_idma_units = 1;
+static uint64_t vuc_dbuf_capacity_pages = VUCServiceConfig{}.dbuf_capacity_pages;
+static uint64_t vuc_parser_units = 1;
+static uint64_t vuc_dsp_units = 1;
+static uint64_t vuc_dlm_capacity_pages = VUCServiceConfig{}.dlm_capacity_pages;
+static uint64_t vuc_idma_setup_ns = VUCServiceConfig{}.idma_setup_ns;
+static uint64_t vuc_ecc_ns_per_4k = VUCServiceConfig{}.ecc_ns_per_4k;
+static uint64_t vuc_candidate_update_ns_per_node = VUCServiceConfig{}.candidate_update_ns_per_node;
+static uint64_t vuc_dsp_setup_ns_per_page = VUCServiceConfig{}.dsp_setup_ns_per_page;
 static volatile sig_atomic_t snapshot_requested = 0;
 static volatile sig_atomic_t stop_requested = 0;
 
@@ -83,6 +110,7 @@ struct DaemonTimingStats {
 };
 
 static DaemonTimingStats daemon_timing_stats;
+static std::map<std::pair<uint64_t, uint64_t>, std::vector<uint8_t>> vuc_result_cache;
 
 static uint64_t monotonic_now_ns()
 {
@@ -210,33 +238,62 @@ static uint64_t estimate_latency_ns(const nvmev_mqsim_io_msg& req)
 
 static bool pop_request(nvmev_mqsim_shm *shm, nvmev_mqsim_io_msg *req)
 {
-	nvmev_mqsim_ring_header& ring = shm->req_ring;
+	static bool prefer_vuc = true;
+	nvmev_mqsim_ring_header *ring;
+	nvmev_mqsim_io_msg *entries;
+	uint32_t mask;
 	uint32_t head;
 
-	if (ring_empty(ring))
+	if (prefer_vuc && !ring_empty(shm->vuc_req_ring)) {
+		ring = &shm->vuc_req_ring;
+		entries = shm->vuc_req_entries;
+		mask = NVMEV_MQSIM_VUC_RING_MASK;
+	} else if (!ring_empty(shm->req_ring)) {
+		ring = &shm->req_ring;
+		entries = shm->req_entries;
+		mask = NVMEV_MQSIM_RING_MASK;
+		prefer_vuc = true;
+	} else if (!ring_empty(shm->vuc_req_ring)) {
+		ring = &shm->vuc_req_ring;
+		entries = shm->vuc_req_entries;
+		mask = NVMEV_MQSIM_VUC_RING_MASK;
+	} else {
 		return false;
+	}
 
-	head = load_u32(&ring.head);
+	head = load_u32(&ring->head);
 	__atomic_thread_fence(__ATOMIC_ACQUIRE);
-	memcpy(req, &shm->req_entries[head & NVMEV_MQSIM_RING_MASK], sizeof(*req));
-	store_u32(&ring.head, head + 1);
+	memcpy(req, &entries[head & mask], sizeof(*req));
+	store_u32(&ring->head, head + 1);
+	prefer_vuc = req->type != NVMEV_MQSIM_MSG_VUC_REQUEST;
 	return true;
 }
 
 static bool push_response(nvmev_mqsim_shm *shm, const nvmev_mqsim_io_msg& resp)
 {
-	nvmev_mqsim_ring_header& ring = shm->resp_ring;
+	nvmev_mqsim_ring_header *ring;
+	nvmev_mqsim_io_msg *entries;
+	uint32_t mask;
 	uint32_t tail;
+	if (resp.type == NVMEV_MQSIM_MSG_VUC_REPLY) {
+		ring = &shm->vuc_resp_ring;
+		entries = shm->vuc_resp_entries;
+		mask = NVMEV_MQSIM_VUC_RING_MASK;
+	} else {
+		ring = &shm->resp_ring;
+		entries = shm->resp_entries;
+		mask = NVMEV_MQSIM_RING_MASK;
+	}
 
-	if (ring_full(ring)) {
-		store_u32(&ring.dropped, load_u32(&ring.dropped) + 1);
+	if (ring_full(*ring)) {
+		store_u32(&ring->dropped, load_u32(&ring->dropped) + 1);
 		return false;
 	}
 
-	tail = load_u32(&ring.tail);
-	memcpy(&shm->resp_entries[tail & NVMEV_MQSIM_RING_MASK], &resp, sizeof(resp));
+	tail = load_u32(&ring->tail);
+	memcpy(&entries[tail & mask], &resp, sizeof(resp));
 	__atomic_thread_fence(__ATOMIC_RELEASE);
-	store_u32(&ring.tail, tail + 1);
+	store_u32(&ring->tail, tail + 1);
 	return true;
 }
 
@@ -244,13 +301,14 @@ static bool msg_valid(const nvmev_mqsim_io_msg& msg)
 {
 	return msg.magic == NVMEV_MQSIM_MAGIC &&
 	       msg.version == NVMEV_MQSIM_VERSION &&
-	       msg.type == NVMEV_MQSIM_MSG_IO_REQUEST;
+	       (msg.type == NVMEV_MQSIM_MSG_IO_REQUEST ||
+		msg.type == NVMEV_MQSIM_MSG_VUC_REQUEST);
 }
 
 static void print_usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s [--model fixed|online|native] [--ssd-config PATH] [--preload-extents PATH] [--trace-first N] [--stats-every-reqs N] [--stats-top N] [--stats-full] [--completion-window-ns N] [--request-coalesce-us N] [--request-coalesce-max N] [--event-stats] [--event-trace-first-events N] [--read-ns N] [--write-ns N] [--ctrl-ns N] [--xfer-4k-ns N]\n",
+		"Usage: %s [--model fixed|online|native] [--ssd-config PATH] [--preload-extents PATH] [--vuc-neighbor-image PATH --vuc-vector-image PATH --vuc-node-map PATH --vuc-vector-map PATH --vuc-neighbor-lba-map PATH --vuc-vector-lba-map PATH --vuc-max-async-reads N --vuc-idma-units N --vuc-dbuf-capacity-pages N --vuc-parser-units N --vuc-input-dma-ns-per-4k N --vuc-idma-ns-per-4k N --vuc-parse-ns-per-id N --vuc-dsp-ns-per-component N --vuc-dsp-units N --vuc-output-dma-ns-per-4k N --vuc-idma-setup-ns N --vuc-ecc-ns-per-4k N --vuc-dsp-setup-ns-per-page N --vuc-candidate-update-ns-per-node N --vuc-dlm-capacity-pages N --vuc-trace PATH]\n",
 		prog);
 }
 
@@ -269,10 +327,112 @@ static void record_pop_delay(const nvmev_mqsim_io_msg& req)
 
 static bool handle_request(nvmev_mqsim_shm *shm,
 			   MQSimNativeOnlineModel& native_online_model,
+			   MQSimVUCService *vuc_service,
+			   uint64_t *vuc_available_time_ns,
 			   const nvmev_mqsim_io_msg& req,
 			   bool *produced_response)
 {
 	nvmev_mqsim_io_msg reply;
+	if (req.type == NVMEV_MQSIM_MSG_VUC_REQUEST) {
+		reply = req;
+		reply.type = NVMEV_MQSIM_MSG_VUC_REPLY;
+		reply.status = NVMEV_VUC_INVALID_ARGUMENT;
+		if (req.vuc_slot >= NVMEV_MQSIM_VUC_SLOT_COUNT ||
+		    req.payload_bytes > NVMEV_MQSIM_VUC_SLOT_BYTES)
+			goto vuc_reply;
+		if (req.vuc_opcode == NVMEV_VUC_OPCODE_EXPAND_AND_FILTER_BATCH &&
+		    vuc_result_cache.size() >= NVMEV_MQSIM_VUC_SLOT_COUNT &&
+		    vuc_result_cache.find(std::make_pair(req.query_id, req.batch_id)) ==
+			vuc_result_cache.end()) {
+			reply.status = NVMEV_VUC_RESOURCE_BUSY;
+			goto vuc_reply;
+		}
+		if (req.vuc_opcode == NVMEV_VUC_OPCODE_FETCH_BATCH_RESULT) {
+			auto result = vuc_result_cache.find({req.query_id, req.batch_id});
+			if (result != vuc_result_cache.end() &&
+			    result->second.size() <= req.payload_bytes) {
+				auto *slot = shm->vuc_slots[req.vuc_slot].payload;
+				std::memcpy(slot, result->second.data(), result->second.size());
+				reply.status = NVMEV_VUC_SUCCESS;
+				reply.response_bytes = (uint32_t)result->second.size();
+				reply.latency_ns = 0;
+				vuc_result_cache.erase(result);
+			} else if (result != vuc_result_cache.end()) {
+				reply.status = NVMEV_VUC_RESULT_OVERFLOW;
+				reply.response_bytes = (uint32_t)result->second.size();
+			}
+		} else if (vuc_service && vuc_available_time_ns &&
+		    req.payload_bytes >= sizeof(nvmev_vuc_expand_filter_request) &&
+		    req.vuc_opcode == NVMEV_VUC_OPCODE_EXPAND_AND_FILTER_BATCH) {
+			auto *slot = shm->vuc_slots[req.vuc_slot].payload;
+			nvmev_vuc_expand_filter_request request = {};
+			std::memcpy(&request, slot, sizeof(request));
+			uint64_t arrival_ns = request.submit_time_ns;
+			if (arrival_ns == 0)
+				arrival_ns = native_online_model.simulated_time_ns();
+			uint64_t start_ns = std::max(arrival_ns, *vuc_available_time_ns);
+			start_ns = std::max(start_ns, native_online_model.simulated_time_ns());
+			uint64_t finish_ns = start_ns;
+			nvmev_vuc_completion completion = {};
+			try {
+				completion = vuc_service->execute(request, slot,
+							  NVMEV_MQSIM_VUC_SLOT_BYTES,
+							  start_ns, &finish_ns);
+			} catch (const std::exception& ex) {
+				fprintf(stderr, "MQSim VUC batch failed: %s\n", ex.what());
+				completion.abi_version = NVMEV_VUC_ABI_VERSION;
+				completion.status = NVMEV_VUC_RESOURCE_BUSY;
+				completion.query_id = request.query_id;
+				completion.batch_id = request.batch_id;
+			}
+			completion.c3_queue_wait_ns = start_ns - arrival_ns;
+			completion.completion_time_ns = finish_ns;
+			if (completion.result_valid &&
+			    request.neighbor_ids_ref <= NVMEV_MQSIM_VUC_SLOT_BYTES &&
+			    (uint64_t)completion.discovered_neighbor_count * sizeof(uint32_t) <=
+				    NVMEV_MQSIM_VUC_SLOT_BYTES - request.neighbor_ids_ref &&
+			    request.candidates_ref <= NVMEV_MQSIM_VUC_SLOT_BYTES &&
+			    (uint64_t)completion.candidate_count * sizeof(nvmev_vuc_candidate) <=
+				    NVMEV_MQSIM_VUC_SLOT_BYTES - request.candidates_ref) {
+				nvmev_vuc_pcie_result_header header = {};
+				header.completion = completion;
+				header.total_bytes = sizeof(header) +
+					(uint32_t)completion.output_bytes;
+				if (header.total_bytes > NVMEV_MQSIM_VUC_SLOT_BYTES) {
+					completion.status = NVMEV_VUC_RESULT_OVERFLOW;
+					completion.result_valid = 0;
+				} else {
+				std::vector<uint8_t> serialized(header.total_bytes);
+				std::memcpy(serialized.data(), &header, sizeof(header));
+				uint8_t *out = serialized.data() + sizeof(header);
+				const size_t neighbor_bytes =
+					(size_t)completion.discovered_neighbor_count * sizeof(uint32_t);
+				const size_t candidate_bytes =
+					(size_t)completion.candidate_count * sizeof(nvmev_vuc_candidate);
+				std::memcpy(out, slot + request.neighbor_ids_ref, neighbor_bytes);
+				std::memcpy(out + neighbor_bytes, slot + request.candidates_ref,
+					    candidate_bytes);
+				const uint64_t query_id = request.query_id;
+				const uint64_t batch_id = request.batch_id;
+				vuc_result_cache[std::make_pair(query_id, batch_id)] = std::move(serialized);
+				}
+			} else if (completion.result_valid) {
+				completion.status = NVMEV_VUC_INVALID_BUFFER;
+				completion.result_valid = 0;
+			}
+			std::memcpy(slot, &completion, sizeof(completion));
+			reply.status = (int32_t)completion.status;
+			reply.latency_ns = finish_ns >= arrival_ns ? finish_ns - arrival_ns : 0;
+			reply.response_bytes = sizeof(completion);
+			*vuc_available_time_ns = finish_ns;
+		}
+	vuc_reply:
+		if (!push_response(shm, reply))
+			return false;
+		if (produced_response)
+			*produced_response = true;
+		return true;
+	}
 
 	if (timing_model == TimingModel::NATIVE_ONLINE) {
 		uint64_t submit_begin_ns;
@@ -311,6 +471,8 @@ static bool handle_request(nvmev_mqsim_shm *shm,
 
 static uint64_t drain_requests(nvmev_mqsim_shm *shm,
 			       MQSimNativeOnlineModel& native_online_model,
+			       MQSimVUCService *vuc_service,
+			       uint64_t *vuc_available_time_ns,
 			       bool *produced_response,
 			       uint64_t max_requests)
 {
@@ -323,7 +485,8 @@ static uint64_t drain_requests(nvmev_mqsim_shm *shm,
 			break;
 		if (!msg_valid(req))
 			continue;
-		if (handle_request(shm, native_online_model, req, produced_response))
+		if (handle_request(shm, native_online_model, vuc_service,
+				   vuc_available_time_ns, req, produced_response))
 			handled++;
 	}
 	return handled;
@@ -331,6 +494,8 @@ static uint64_t drain_requests(nvmev_mqsim_shm *shm,
 
 static uint64_t coalesce_requests(nvmev_mqsim_shm *shm,
 				  MQSimNativeOnlineModel& native_online_model,
+				  MQSimVUCService *vuc_service,
+				  uint64_t *vuc_available_time_ns,
 				  bool *produced_response,
 				  uint64_t already_handled)
 {
@@ -349,7 +514,8 @@ static uint64_t coalesce_requests(nvmev_mqsim_shm *shm,
 	deadline_ns = start_ns + request_coalesce_us * 1000;
 	while (total_handled < request_coalesce_max) {
 		uint64_t newly_handled =
-			drain_requests(shm, native_online_model, produced_response,
+			drain_requests(shm, native_online_model, vuc_service,
+				       vuc_available_time_ns, produced_response,
 				       request_coalesce_max - total_handled);
 
 		total_handled += newly_handled;
@@ -451,11 +617,13 @@ int main(int argc, char **argv)
 	nvmev_mqsim_shm *shm;
 	long page_size = sysconf(_SC_PAGESIZE);
 	size_t shm_size;
-	struct pollfd pfd;
+	struct pollfd pollfds[1] = {};
 	MQSimNativeOnlineModel native_online_model;
+	std::unique_ptr<MQSimVUCService> vuc_service;
 	uint64_t daemon_request_count = 0;
 	uint64_t daemon_reply_count = 0;
 	uint64_t next_stats_at = 0;
+	uint64_t vuc_available_time_ns = 0;
 
 	if (page_size <= 0) {
 		perror("sysconf(_SC_PAGESIZE)");
@@ -510,6 +678,58 @@ int main(int argc, char **argv)
 			if (i + 1 >= argc)
 				goto invalid_args;
 			preload_extents_path = argv[++i];
+		} else if (!strcmp(argv[i], "--vuc-trace")) {
+			if (i + 1 >= argc) goto invalid_args;
+			vuc_trace_path = argv[++i];
+		} else if (!strcmp(argv[i], "--vuc-neighbor-image")) {
+			if (i + 1 >= argc) goto invalid_args;
+			vuc_neighbor_path = argv[++i];
+		} else if (!strcmp(argv[i], "--vuc-vector-image")) {
+			if (i + 1 >= argc) goto invalid_args;
+			vuc_vector_path = argv[++i];
+		} else if (!strcmp(argv[i], "--vuc-vector-map")) {
+			if (i + 1 >= argc) goto invalid_args;
+			vuc_vector_map_path = argv[++i];
+		} else if (!strcmp(argv[i], "--vuc-node-map")) {
+			if (i + 1 >= argc) goto invalid_args;
+			vuc_node_map_path = argv[++i];
+		} else if (!strcmp(argv[i], "--vuc-neighbor-lba-map")) {
+			if (i + 1 >= argc) goto invalid_args;
+			vuc_neighbor_lba_map_path = argv[++i];
+		} else if (!strcmp(argv[i], "--vuc-vector-lba-map")) {
+			if (i + 1 >= argc) goto invalid_args;
+			vuc_vector_lba_map_path = argv[++i];
+		} else if (!strcmp(argv[i], "--vuc-dlm-capacity-pages")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_dlm_capacity_pages)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-idma-setup-ns")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_idma_setup_ns)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-ecc-ns-per-4k")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_ecc_ns_per_4k)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-candidate-update-ns-per-node")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_candidate_update_ns_per_node)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-dsp-setup-ns-per-page")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_dsp_setup_ns_per_page)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-max-async-reads")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_max_async_reads)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-idma-units")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_idma_units)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-dbuf-capacity-pages")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_dbuf_capacity_pages)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-parser-units")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_parser_units)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-input-dma-ns-per-4k")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_input_dma_ns_per_4k)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-idma-ns-per-4k") ||
+			   !strcmp(argv[i], "--vuc-dbuf-ns-per-4k")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_idma_ns_per_4k)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-parse-ns-per-id")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_parse_ns_per_id)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-dsp-ns-per-component")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_dsp_ns_per_component)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-dsp-units")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_dsp_units)) goto invalid_args;
+		} else if (!strcmp(argv[i], "--vuc-output-dma-ns-per-4k")) {
+			if (!parse_u64_arg(argc, argv, &i, &vuc_output_dma_ns_per_4k)) goto invalid_args;
 		} else if (!strcmp(argv[i], "--model")) {
 			if (i + 1 >= argc)
 				goto invalid_args;
@@ -544,6 +764,61 @@ int main(int argc, char **argv)
 			return 1;
 	}
 
+	if (!vuc_neighbor_path.empty()) {
+		if (timing_model != TimingModel::NATIVE_ONLINE ||
+		    vuc_neighbor_path.empty() || vuc_vector_path.empty() ||
+		    vuc_node_map_path.empty() || vuc_neighbor_lba_map_path.empty() ||
+		    vuc_vector_lba_map_path.empty() || !vuc_max_async_reads || vuc_max_async_reads > 16 ||
+		    vuc_idma_units != 1 ||
+		    !vuc_dbuf_capacity_pages || vuc_dbuf_capacity_pages > 32 ||
+		    vuc_dlm_capacity_pages < 2 || vuc_dlm_capacity_pages > 32 ||
+		    !vuc_parser_units || vuc_parser_units > UINT32_MAX ||
+		    !vuc_dsp_units || vuc_dsp_units > UINT32_MAX) {
+			fprintf(stderr, "VUC requires native mode, images/maps, depth 1..16, one shared DMA lane, DBUF 1..32 pages, DLM 2..32 pages\n");
+			return 1;
+		}
+		VUCServiceConfig config;
+		config.trace_path = vuc_trace_path;
+		config.neighbor_path = vuc_neighbor_path;
+		config.vector_path = vuc_vector_path;
+		config.node_to_nbr_slot_path = vuc_node_map_path;
+		config.node_to_vector_slot_path = vuc_vector_map_path;
+		config.neighbor_page_lba_path = vuc_neighbor_lba_map_path;
+		config.vector_page_lba_path = vuc_vector_lba_map_path;
+		config.max_async_reads = (uint32_t)vuc_max_async_reads;
+		config.idma_units = (uint32_t)vuc_idma_units;
+		config.dbuf_capacity_pages = (uint32_t)vuc_dbuf_capacity_pages;
+		config.parser_units = (uint32_t)vuc_parser_units;
+		config.input_dma_ns_per_4k = vuc_input_dma_ns_per_4k;
+		config.idma_ns_per_4k = vuc_idma_ns_per_4k;
+		config.neighbor_parse_ns_per_id = vuc_parse_ns_per_id;
+		config.dsp_ns_per_float_component = vuc_dsp_ns_per_component;
+		config.dsp_units = (uint32_t)vuc_dsp_units;
+		config.dlm_capacity_pages = vuc_dlm_capacity_pages;
+		config.idma_setup_ns = vuc_idma_setup_ns;
+		config.ecc_ns_per_4k = vuc_ecc_ns_per_4k;
+		config.candidate_update_ns_per_node = vuc_candidate_update_ns_per_node;
+		config.dsp_setup_ns_per_page = vuc_dsp_setup_ns_per_page;
+		config.output_dma_ns_per_4k = vuc_output_dma_ns_per_4k;
+		try {
+			vuc_service.reset(new MQSimVUCService(native_online_model, config));
+		} catch (const std::exception& ex) {
+			fprintf(stderr, "VUC data/model initialization failed: %s\n", ex.what());
+			return 1;
+		}
+		printf("VUC C3 service ready: transport=NVMeVirt-ring max_async_reads=%" PRIu64 " query/vector pages use separate LBA extents\n",
+		       vuc_max_async_reads);
+		printf("VUC assumed costs (not hardware measurements): input/output=%" PRIu64 "/%" PRIu64
+		       " ns/4K, shared DMA setup=%" PRIu64 " ns + %" PRIu64 " ns/4K, ECC=%" PRIu64
+		       " ns/4K, parser=%" PRIu64 " ns/ID, L2=%" PRIu64 " ns/component + %" PRIu64
+		       " ns/page, update=%" PRIu64 " ns/node, DBUF/DLM=%" PRIu64 "/%" PRIu64 " pages\n",
+		       vuc_input_dma_ns_per_4k, vuc_output_dma_ns_per_4k, vuc_idma_setup_ns,
+		       vuc_idma_ns_per_4k, vuc_ecc_ns_per_4k, vuc_parse_ns_per_id,
+		       vuc_dsp_ns_per_component, vuc_dsp_setup_ns_per_page,
+		       vuc_candidate_update_ns_per_node, vuc_dbuf_capacity_pages, vuc_dlm_capacity_pages);
+		vuc_available_time_ns = native_online_model.simulated_time_ns();
+	}
+
 	fd = open("/dev/" NVMEV_MQSIM_DEVICE_NAME, O_RDWR);
 	if (fd < 0) {
 		perror("open shared-memory IPC device");
@@ -559,7 +834,9 @@ int main(int argc, char **argv)
 
 	if (load_u32(&shm->magic) != NVMEV_MQSIM_MAGIC ||
 	    load_u32(&shm->version) != NVMEV_MQSIM_VERSION ||
-	    load_u32(&shm->ring_size) != NVMEV_MQSIM_RING_SIZE) {
+	    load_u32(&shm->ring_size) != NVMEV_MQSIM_RING_SIZE ||
+	    load_u32(&shm->vuc_req_ring.size) != NVMEV_MQSIM_VUC_RING_SIZE ||
+	    load_u32(&shm->vuc_resp_ring.size) != NVMEV_MQSIM_VUC_RING_SIZE) {
 		fprintf(stderr, "Shared-memory IPC ABI mismatch\n");
 		munmap(shm, shm_size);
 		close(fd);
@@ -574,8 +851,8 @@ int main(int argc, char **argv)
 		       read_latency_ns, write_latency_ns, controller_overhead_ns, transfer_per_4k_ns);
 	}
 
-	pfd.fd = fd;
-	pfd.events = POLLIN;
+	pollfds[0].fd = fd;
+	pollfds[0].events = POLLIN;
 	{
 	struct sigaction action = {};
 	action.sa_handler = handle_signal;
@@ -608,8 +885,12 @@ int main(int argc, char **argv)
 		bool produced_response = false;
 		uint64_t handled_this_loop = 0;
 
-		handled_this_loop = drain_requests(shm, native_online_model, &produced_response, 0);
-		handled_this_loop = coalesce_requests(shm, native_online_model, &produced_response,
+		handled_this_loop = drain_requests(shm, native_online_model, vuc_service.get(),
+						   &vuc_available_time_ns,
+						   &produced_response, 0);
+		handled_this_loop = coalesce_requests(shm, native_online_model, vuc_service.get(),
+						      &vuc_available_time_ns,
+						      &produced_response,
 						      handled_this_loop);
 		daemon_request_count += handled_this_loop;
 
@@ -691,13 +972,14 @@ int main(int argc, char **argv)
 			continue;
 
 		// Bounded wait also handles a signal arriving just before poll().
-		ready = poll(&pfd, 1, 100);
+		ready = poll(pollfds, 1, 100);
 		if (ready < 0) {
 			if (errno == EINTR)
 				continue;
 			perror("poll");
 			break;
 		}
+
 	}
 
 	munmap(shm, shm_size);

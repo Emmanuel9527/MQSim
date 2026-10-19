@@ -29,7 +29,14 @@ public:
 	bool initialize(const std::string& ssd_config_path, std::string *error);
 	uint64_t preload_write(uint64_t slba, uint32_t nlb);
 	uint64_t estimate_latency_ns(const nvmev_mqsim_io_msg& req);
+	std::vector<uint64_t> estimate_read_batch_ns(const std::vector<nvmev_mqsim_io_msg>& reqs,
+							     uint64_t submit_time_ns = 0);
+	uint64_t simulated_time_ns() const;
 	bool submit_request(const nvmev_mqsim_io_msg& req);
+	/* Event-level hooks used by the C3 pipeline scheduler. */
+	bool has_pending_event() const;
+	uint64_t next_event_time_ns() const;
+	bool run_next_event();
 	bool run_until_next_completion();
 	size_t run_completion_batch(sim_time_type completion_window_ns,
 				    sim_time_type *sim_time_advanced_ns = NULL);
@@ -76,6 +83,8 @@ private:
 	std::unordered_map<SSD_Components::User_Request *, PendingRequest *> pending_by_request;
 	std::deque<nvmev_mqsim_io_msg> completed_replies;
 	std::deque<std::string> completed_traces;
+	std::deque<nvmev_mqsim_io_msg> deferred_replies;
+	std::deque<std::string> deferred_traces;
 	uint64_t events_run;
 	uint64_t max_pending;
 	static MQSimNativeOnlineModel *active_instance;

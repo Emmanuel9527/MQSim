@@ -204,6 +204,63 @@ uint64_t MQSimNativeOnlineModel::estimate_latency_ns(const nvmev_mqsim_io_msg& r
 	return submit_and_drain(req);
 }
 
+std::vector<uint64_t> MQSimNativeOnlineModel::estimate_read_batch_ns(
+	const std::vector<nvmev_mqsim_io_msg>& reqs, uint64_t submit_time_ns)
+{
+	std::unordered_map<uint64_t, size_t> request_index;
+	std::vector<uint64_t> latencies(reqs.size(), 0);
+	size_t remaining = reqs.size();
+
+	if (reqs.empty())
+		return latencies;
+
+	/* Submit the whole NAND wave at one simulated timestamp. MQSim then models
+	 * actual channel/LUN contention and overlap within this wave. */
+	const uint64_t now_ns = (uint64_t)Simulator->Time();
+	const uint64_t arrival_ns = submit_time_ns > now_ns ? submit_time_ns : now_ns;
+	for (size_t i = 0; i < reqs.size(); ++i) {
+		nvmev_mqsim_io_msg req = reqs[i];
+		if (req.opcode != NVMEV_MQSIM_IO_READ)
+			throw std::invalid_argument("read batch only accepts READ requests");
+		if (request_index.find(req.request_id) != request_index.end())
+			throw std::invalid_argument("request IDs in one MQSim batch must be unique");
+		req.submit_time_ns = arrival_ns;
+		req.type = NVMEV_MQSIM_MSG_IO_REQUEST;
+		req.magic = NVMEV_MQSIM_MAGIC;
+		req.version = NVMEV_MQSIM_VERSION;
+		request_index[req.request_id] = i;
+		submit_request(req);
+	}
+
+	while (remaining != 0) {
+		if (!Simulator->Run_next_event())
+			throw std::runtime_error("MQSim event queue drained before internal read batch completed");
+		++events_run;
+		while (!completed_replies.empty()) {
+			nvmev_mqsim_io_msg reply = completed_replies.front();
+			std::string trace = completed_traces.empty() ? std::string() : completed_traces.front();
+			completed_replies.pop_front();
+			if (!completed_traces.empty())
+				completed_traces.pop_front();
+			auto it = request_index.find(reply.request_id);
+			if (it == request_index.end()) {
+				deferred_replies.push_back(reply);
+				deferred_traces.push_back(trace);
+				continue;
+			}
+			latencies[it->second] = reply.latency_ns;
+			request_index.erase(it);
+			--remaining;
+		}
+	}
+	return latencies;
+}
+
+uint64_t MQSimNativeOnlineModel::simulated_time_ns() const
+{
+	return (uint64_t)Simulator->Time();
+}
+
 bool MQSimNativeOnlineModel::submit_request(const nvmev_mqsim_io_msg& req)
 {
 	SSD_Components::UserRequestType type =
@@ -249,6 +306,24 @@ bool MQSimNativeOnlineModel::run_until_next_completion()
 	return completed_replies.size() > completed_before;
 }
 
+bool MQSimNativeOnlineModel::has_pending_event() const
+{
+	return Simulator->Has_pending_event();
+}
+
+uint64_t MQSimNativeOnlineModel::next_event_time_ns() const
+{
+	return Simulator->Has_pending_event() ? (uint64_t)Simulator->Next_event_time() : UINT64_MAX;
+}
+
+bool MQSimNativeOnlineModel::run_next_event()
+{
+	if (!Simulator->Run_next_event())
+		return false;
+	++events_run;
+	return true;
+}
+
 size_t MQSimNativeOnlineModel::run_completion_batch(sim_time_type completion_window_ns,
 						    sim_time_type *sim_time_advanced_ns)
 {
@@ -285,15 +360,25 @@ size_t MQSimNativeOnlineModel::run_completion_batch(sim_time_type completion_win
 
 bool MQSimNativeOnlineModel::pop_completed_reply(nvmev_mqsim_io_msg *reply, std::string *trace)
 {
-	if (completed_replies.empty())
+	if (deferred_replies.empty() && completed_replies.empty())
 		return false;
-	if (reply)
-		*reply = completed_replies.front();
-	if (trace)
-		*trace = completed_traces.empty() ? std::string() : completed_traces.front();
-	completed_replies.pop_front();
-	if (!completed_traces.empty())
-		completed_traces.pop_front();
+	if (!deferred_replies.empty()) {
+		if (reply)
+			*reply = deferred_replies.front();
+		if (trace)
+			*trace = deferred_traces.empty() ? std::string() : deferred_traces.front();
+		deferred_replies.pop_front();
+		if (!deferred_traces.empty())
+			deferred_traces.pop_front();
+	} else {
+		if (reply)
+			*reply = completed_replies.front();
+		if (trace)
+			*trace = completed_traces.empty() ? std::string() : completed_traces.front();
+		completed_replies.pop_front();
+		if (!completed_traces.empty())
+			completed_traces.pop_front();
+	}
 	return true;
 }
 
