@@ -183,8 +183,14 @@ def main():
     mount = capture(['findmnt', '-n', '-o', 'SOURCE,FSTYPE,MAJ:MIN', '-T', str(args.file)])
     major_minor = f'{os.major(info.st_dev)}:{os.minor(info.st_dev)}'
     sysdev = Path('/sys/dev/block') / major_minor
-    if args.device not in sysdev.resolve().parts or not Path('/sys/class/block', args.device).exists():
-        raise SystemExit(f'Input device {major_minor} does not directly belong to {args.device}; check mapping')
+    def backed_by(node, depth=0):
+        # Partition paths contain the whole-device name; LVM/dm devices list their backing devices in slaves/.
+        node = node.resolve()
+        if args.device in node.parts:
+            return True
+        return depth < 4 and any(backed_by(s, depth + 1) for s in (node / 'slaves').glob('*'))
+    if not Path('/sys/class/block', args.device).exists() or not backed_by(sysdev):
+        raise SystemExit(f'Input device {major_minor} is not backed by {args.device}; check mapping')
     schedule = []
     rng = random.Random(args.seed)
     for repeat in range(1, args.repeats + 1):

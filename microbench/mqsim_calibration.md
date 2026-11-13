@@ -1012,3 +1012,24 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 ### 對 batching 研究的意義
 
 如果閒置空檔能讓裝置回到快狀態，那麼「批次之間的空檔」就會改變裝置狀態本身，而不只是改變排隊。這正是 NAND_TRANSACTION_BATCHING.md 裡「inter-batch gaps」那條假說要面對的混淆。下一步用 `gap_probe.sh`：先連續負載 30s 進入慢狀態，再以「2s 負載＋G ms 閒置」掃 G=0/20/50/100/200/500/1000/3000，APST 開／關各一輪（透過 `pm_qos_latency_tolerance_us`，結束時還原）。
+
+## 伺服器 Crucial T500 對照（state_probe_server_20261114）
+
+裝置：CT2000T500SSD8，韌體 P8CR004，`hmpre=hmmin=0`，表示不使用 HMB，應該有自帶 DRAM。同樣是系統碟（LVM）。讀取目標：`/home/user/datasets/SIFT1B/bigann_base.bvecs.gz` 前 32GiB（92GB 檔案，非 sparse）。
+
+用 SMART `host_read_commands` 在各階段之間的差值換算平均 IOPS（包含 fio 以外的讀取，但 idle 階段差值為 0，可忽略）：
+
+| 階段 | 讀取命令數 | 秒數 | 平均 IOPS | fio 結束時進度列 |
+|---|---:|---:|---:|---:|
+| QD16 (a) | 56,254,100 | 300 | 187.5k | 187k |
+| QD1 | 2,333,043 | 180 | 13.0k（約 77µs） | 12.9k |
+| QD128 | 76,589,815 | 180 | 425.5k | 424k |
+| QD16 (b) | 22,549,039 | 120 | 187.9k | – |
+
+- 平均值和結束瞬間幾乎相同，兩次 QD16 也一致。
+- 逐秒檢查（資料已拉回本機 `results/state_probe_server_20261114`）：除第 0 秒爬升外，QD16 兩次全程 185k–189k，QD128 420k–433k，QD1 12k–13k。沒有開頭快段（第 0 秒反而略低，和 GM7 相反），也沒有中途切換。解析度是 1 秒，更短的切換看不到；但 GM7 的狀態段都長達數秒以上。
+- 延遲分布也是單峰：QD1 p50/p90/p99 = 74/75/77µs（GM7 同一個 probe：84/134/733µs）；QD16 80/94/136µs（GM7：469/1663/2703µs）；QD128 289/326/387µs。T500 只有 p99.99 約 2ms 的極少數尾巴（0.01%）。
+- 溫度 28.9–43.9°C，thermal 計數全 0。
+- 和 GM7 快狀態比：QD1 13.0k vs 10k，QD16 188k vs 126k，QD128 426k vs 約 250k（GM7 只有 QD64 的 5 秒）。
+- 推論：GM7 的雙狀態是該顆裝置（DRAM-less／HMB、MAP1602 韌體）的行為，不是 Linux 或量測方法造成。兩顆的控制器也不同，無法只歸因於 DRAM 有無。
+- `read_sweep.py` 的裝置檢查改為會追 device-mapper 的 `slaves/`，讓 LVM 上的檔案也能通過（原本只接受分割區直接在 nvme0n1 上）。
