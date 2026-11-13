@@ -1,3 +1,26 @@
+# Build outputs
 MQSim
 build/
+*.o
 
+# Python caches
+__pycache__/
+*.pyc
+
+# Experiment data (raw fio/MQSim outputs, logs, figures) - kept local only
+/microbench/results/
+/microbench/results_*/
+*.log
+fio*.json
+
+# Large datasets / disk images, if ever placed in the repo
+*.index
+*.bin
+*.fbin
+*.img
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store

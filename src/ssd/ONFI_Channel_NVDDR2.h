@@ -1,3 +1,4 @@
+#include "Channel_Transfer_Time.h"
 #ifndef ONFI_CHANNEL_NVDDR2_H
 #define ONFI_CHANNEL_NVDDR2_H
 
@@ -5,8 +6,8 @@
 #include "ONFI_Channel_Base.h"
 
 
-#define NVDDR2DataInTransferTime(X,Y) ((X / Y->ChannelWidth / 2) * Y->TwoUnitDataInTime)
-#define NVDDR2DataOutTransferTime(X,Y) ((X / Y->ChannelWidth / 2) * Y->TwoUnitDataOutTime)
+#define NVDDR2DataInTransferTime(X,Y) ((Y)->TransferRateMTs ? SSD_Components::Channel_transfer_ns((X), (Y)->ChannelWidth, (Y)->TransferRateMTs) : ((X) / (Y)->ChannelWidth / 2) * (Y)->TwoUnitDataInTime)
+#define NVDDR2DataOutTransferTime(X,Y) ((Y)->TransferRateMTs ? SSD_Components::Channel_transfer_ns((X), (Y)->ChannelWidth, (Y)->TransferRateMTs) : ((X) / (Y)->ChannelWidth / 2) * (Y)->TwoUnitDataOutTime)
 
 
 namespace SSD_Components
@@ -33,6 +34,7 @@ namespace SSD_Components
 		sim_time_type EraseCommandTime[5];
 		sim_time_type EraseSuspendCommandTime;
 
+		uint64_t TransferRateMTs = 0; // Device configuration sets this; zero retains constructor timing API.
 		unsigned int ChannelWidth; //channel width in bytes
 	private:
 		//Data input/ouput timing parameters related to bus frequency

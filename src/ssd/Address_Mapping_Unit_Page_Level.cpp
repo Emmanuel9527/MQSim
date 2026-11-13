@@ -1,6 +1,7 @@
 #include <cmath>
 #include <assert.h>
 #include <stdexcept>
+#include <vector>
 
 #include "Address_Mapping_Unit_Page_Level.h"
 #include "Stats.h"
@@ -131,6 +132,11 @@ namespace SSD_Components
 	CMTSlotType Cached_Mapping_Table::Evict_one_slot(LPA_type& lpa)
 	{
 		assert(addressMap.size() > 0);
+        if (lruList.back().second->Status == CMTEntryStatus::WAITING) {
+            std::cerr << "CMT_EVICT_WAITING time_ns=" << Simulator->Time()
+                << " stream=" << lruList.back().second->Stream_id
+                << " lpa=" << UNIQUE_KEY_TO_LPN(lruList.back().second->Stream_id,lruList.back().first) << std::endl;
+        }
 		addressMap.erase(lruList.back().first);
 		lpa = UNIQUE_KEY_TO_LPN(lruList.back().second->Stream_id,lruList.back().first);
 		CMTSlotType evictedItem = *lruList.back().second;
@@ -564,6 +570,9 @@ namespace SSD_Components
 					Stats::total_readTR_CMT_queries_per_stream[stream_id]++;
 					Stats::readTR_CMT_miss++;
 					Stats::readTR_CMT_miss_per_stream[stream_id]++;
+                    transaction->OBS_mapping_enter_ns = Simulator->Time();
+                    transaction->OBS_mapping_active = true;
+                    transaction->OBS_mapping_episodes++;
 					domains[stream_id]->Waiting_unmapped_read_transactions.insert(std::pair<LPA_type, NVM_Transaction_Flash*>(transaction->LPA, transaction));
 				} else {//This is a write transaction
 					Stats::total_writeTR_CMT_queries++;
@@ -1378,6 +1387,7 @@ namespace SSD_Components
 				PRINT_ERROR("Unknown plane allocation scheme type!")
 		}
 
+		Stats::Read_entries_created_online++;
 		block_manager->Allocate_block_and_page_in_plane_for_user_write(stream_id, read_address);
 		PPA_type ppa = Convert_address_to_ppa(read_address);
 		domain->Update_mapping_info(ideal_mapping_table, stream_id, lpa, ppa, read_sectors_bitmap);
@@ -1613,6 +1623,11 @@ namespace SSD_Components
 
 			NVM_Transaction_Flash_WR* writeTR = new NVM_Transaction_Flash_WR(Transaction_Source_Type::MAPPING, stream_id, SECTOR_SIZE_IN_BYTE * sector_no_per_page,
 				mvpn, mppn, NULL, mvpn, readTR, (((page_status_type)0x1) << sector_no_per_page) - 1, CurrentTimeStamp);
+			//Link the merge read back to its write. The read was created with RelatedWrite=NULL, so its completion never
+			//cleared writeTR->RelatedRead and TSU::transaction_is_ready() kept the translation write blocked forever.
+			if (readTR != NULL) {
+				readTR->RelatedWrite = writeTR;
+			}
 			allocate_plane_for_translation_write(writeTR);
 			allocate_page_in_plane_for_translation_write(writeTR, mvpn, false);
 			domains[stream_id]->DepartingMappingEntries.insert(get_MVPN(lpn, stream_id));
@@ -1698,6 +1713,8 @@ namespace SSD_Components
 						auto it2 = _my_instance->domains[transaction->Stream_id]->Waiting_unmapped_read_transactions.find(lpa);
 						while (it2 != _my_instance->domains[transaction->Stream_id]->Waiting_unmapped_read_transactions.end() &&
 							(*it2).first == lpa) {
+                            it2->second->OBS_mapping_wait_ns += Simulator->Time() - it2->second->OBS_mapping_enter_ns;
+                            it2->second->OBS_mapping_active = false;
 							if (_my_instance->is_lpa_locked_for_gc(transaction->Stream_id, lpa)) {
 								_my_instance->manage_user_transaction_facing_barrier(it2->second);
 							} else {
@@ -1802,22 +1819,37 @@ namespace SSD_Components
 		}
 		domains[stream_id]->Locked_LPAs.erase(itr);
 
-		//If there are read requests waiting behind the barrier, then MQSim assumes they can be serviced with the actual page data that is accessed during GC execution
-		auto read_tr = domains[stream_id]->Read_transactions_behind_LPA_barrier.find(lpa);
-		while (read_tr != domains[stream_id]->Read_transactions_behind_LPA_barrier.end()) {
-			handle_transaction_serviced_signal_from_PHY((*read_tr).second);
-			delete (*read_tr).second;
-			domains[stream_id]->Read_transactions_behind_LPA_barrier.erase(read_tr);
-			read_tr = domains[stream_id]->Read_transactions_behind_LPA_barrier.find(lpa);
+		/* User transactions that waited behind the GC barrier are re-driven through the normal
+		* translation and scheduling path now that the page has been relocated. The former code
+		* called only this unit's serviced handler (which ignores non-mapping transactions) and
+		* then deleted the transaction, so the owning user request was never completed.*/
+		std::vector<NVM_Transaction_Flash*> released;
+		auto reads = domains[stream_id]->Read_transactions_behind_LPA_barrier.equal_range(lpa);
+		for (auto it = reads.first; it != reads.second; it++) {
+			released.push_back(it->second);
 		}
+		domains[stream_id]->Read_transactions_behind_LPA_barrier.erase(reads.first, reads.second);
+		auto writes = domains[stream_id]->Write_transactions_behind_LPA_barrier.equal_range(lpa);
+		for (auto it = writes.first; it != writes.second; it++) {
+			released.push_back(it->second);
+		}
+		domains[stream_id]->Write_transactions_behind_LPA_barrier.erase(writes.first, writes.second);
 
-		//If there are write requests waiting behind the barrier, then MQSim assumes they can be serviced with the actual page data that is accessed during GC execution. This may not be 100% true for all write requests, but, to avoid more complexity in the simulation, we accept this assumption.
-		auto write_tr = domains[stream_id]->Write_transactions_behind_LPA_barrier.find(lpa);
-		while (write_tr != domains[stream_id]->Write_transactions_behind_LPA_barrier.end()) {
-			handle_transaction_serviced_signal_from_PHY((*write_tr).second);
-			delete (*write_tr).second;
-			domains[stream_id]->Write_transactions_behind_LPA_barrier.erase(write_tr);
-			write_tr = domains[stream_id]->Write_transactions_behind_LPA_barrier.find(lpa);
+		if (released.size() > 0) {
+			Stats::User_transactions_released_from_LPA_barrier += released.size();
+			for (auto tr : released) {
+				query_cmt(tr);
+			}
+			ftl->TSU->Prepare_for_transaction_submit();
+			for (auto tr : released) {
+				if (tr->Physical_address_determined) {
+					ftl->TSU->Submit_transaction(tr);
+					if (tr->Type == Transaction_Type::WRITE && ((NVM_Transaction_Flash_WR*)tr)->RelatedRead != NULL) {
+						ftl->TSU->Submit_transaction(((NVM_Transaction_Flash_WR*)tr)->RelatedRead);
+					}
+				}
+			}
+			ftl->TSU->Schedule();
 		}
 	}
 

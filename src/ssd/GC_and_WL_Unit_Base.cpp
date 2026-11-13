@@ -216,7 +216,12 @@ namespace SSD_Components
 	bool GC_and_WL_Unit_Base::Stop_servicing_writes(const NVM::FlashMemory::Physical_Page_Address& plane_address)
 	{
 		PlaneBookKeepingType* pbke = &(_my_instance->block_manager->plane_manager[plane_address.ChannelID][plane_address.ChipID][plane_address.DieID][plane_address.PlaneID]);
-		return block_manager->Get_pool_size(plane_address) < max_ongoing_gc_reqs_per_plane;
+		bool stop = block_manager->Get_pool_size(plane_address) < max_ongoing_gc_reqs_per_plane;
+		if (stop && !GC_enabled) {
+			//Without GC no block will ever be reclaimed, so a stalled write would wait forever. Fail loudly instead.
+			PRINT_ERROR("Free blocks exhausted while GC_Enabled is false; writes cannot be serviced. Enable GC or reduce the written volume.")
+		}
+		return stop;
 	}
 
 	bool GC_and_WL_Unit_Base::is_safe_gc_wl_candidate(const PlaneBookKeepingType* plane_record, const flash_block_ID_type gc_wl_candidate_block_id)

@@ -17,6 +17,9 @@ namespace SSD_Components {
 		WaitingCopybackWrites = new std::list<DieBookKeepingEntry*>[channel_count];
 		bookKeepingTable = new ChipBookKeepingEntry*[channel_count];
 		for (unsigned int channelID = 0; channelID < channel_count; channelID++) {
+            WaitingReadTX[channelID].Observe_phy_data_out();
+            WaitingGCRead_TX[channelID].Observe_phy_data_out();
+            WaitingMappingRead_TX[channelID].Observe_phy_data_out();
 			bookKeepingTable[channelID] = new ChipBookKeepingEntry[chip_no_per_channel];
 			for (unsigned int chipID = 0; chipID < chip_no_per_channel; chipID++) {
 				bookKeepingTable[channelID][chipID].Expected_command_exec_finish_time = T0; 

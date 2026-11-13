@@ -29,6 +29,7 @@ namespace Utils
 		Utils::Workload_Type Type;
 		stream_id_type Stream_id;
 		double Initial_occupancy_ratio;//Ratio of the logical storage space that is fill with data in steady-state
+		bool Precondition_full_working_set = false;//Synthetic only: every page in [Min_LHA, Max_LHA] is written during preconditioning
 		unsigned int Replay_no;
 		unsigned int Total_generated_requests;
 

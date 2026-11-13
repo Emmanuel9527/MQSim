@@ -112,6 +112,7 @@ namespace Host_Components
 		sim_time_type next_logging_milestone;
 		std::string logging_file_path;
 		std::ofstream log_file;
+        void Write_checkpoint();
 		uint32_t Get_device_response_time_short_term();//in microseconds
 		uint32_t Get_end_to_end_request_delay_short_term();//in microseconds
 		sim_time_type STAT_sum_device_response_time_short_term, STAT_sum_request_delay_short_term;

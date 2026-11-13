@@ -29,6 +29,7 @@ double Device_Parameter_Set::GC_Exec_Threshold = 0.05;//The threshold for the ra
 SSD_Components::GC_Block_Selection_Policy_Type Device_Parameter_Set::GC_Block_Selection_Policy = SSD_Components::GC_Block_Selection_Policy_Type::RGA;
 bool Device_Parameter_Set::Use_Copyback_for_GC = false;
 bool Device_Parameter_Set::Preemptible_GC_Enabled = true;
+bool Device_Parameter_Set::GC_Enabled = true;
 double Device_Parameter_Set::GC_Hard_Threshold = 0.005;//The hard gc execution threshold, used to stop preemptible gc execution
 bool Device_Parameter_Set::Dynamic_Wearleveling_Enabled = true;
 bool Device_Parameter_Set::Static_Wearleveling_Enabled = true;
@@ -315,6 +316,10 @@ void Device_Parameter_Set::XML_serialize(Utils::XmlWriter& xmlwriter)
 	val = (Preemptible_GC_Enabled ? "true" : "false");
 	xmlwriter.Write_attribute_string(attr, val);
 
+	attr = "GC_Enabled";
+	val = (GC_Enabled ? "true" : "false");
+	xmlwriter.Write_attribute_string(attr, val);
+
 	attr = "GC_Hard_Threshold";
 	val = std::to_string(GC_Hard_Threshold);
 	xmlwriter.Write_attribute_string(attr, val);
@@ -578,6 +583,10 @@ void Device_Parameter_Set::XML_deserialize(rapidxml::xml_node<> *node)
 					std::string val = param->value();
 					std::transform(val.begin(), val.end(), val.begin(), ::toupper);
 					Use_Copyback_for_GC = (val.compare("FALSE") == 0 ? false : true);
+			} else if (strcmp(param->name(), "GC_Enabled") == 0) {
+				std::string val = param->value();
+				std::transform(val.begin(), val.end(), val.begin(), ::toupper);
+				GC_Enabled = (val.compare("FALSE") == 0 ? false : true);
 			} else if (strcmp(param->name(), "Preemptible_GC_Enabled") == 0) {
 				std::string val = param->value();
 				std::transform(val.begin(), val.end(), val.begin(), ::toupper);

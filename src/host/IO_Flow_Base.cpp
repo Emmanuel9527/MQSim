@@ -1,3 +1,4 @@
+#include "../ssd/Stats.h"
 #include "IO_Flow_Base.h"
 #include "../ssd/Host_Interface_Defs.h"
 #include "../sim/Engine.h"
@@ -142,7 +143,10 @@ IO_Flow_Base::IO_Flow_Base(const sim_object_id_type &name, uint16_t flow_id, LHA
 		if (enabled_logging) {
 			log_file.open(logging_file_path, std::ofstream::out);
 		}
-		log_file << "SimulationTime(us)\t" << "ReponseTime(us)\t" << "EndToEndDelay(us)"<< std::endl;
+		if (enabled_logging) {
+            log_file << "SimulationTime(us)\tReponseTime(us)\tEndToEndDelay(us)\ttime_ns\tcompleted\tgenerated\tlatency_sum_ns\tdevice_sum_ns\tread_bytes\tcmt_queries_global\tcmt_misses_global\tmapping_reads_global" << std::endl;
+            Write_checkpoint();
+        }
 		STAT_sum_device_response_time_short_term = 0;
 		STAT_serviced_request_count_short_term = 0;
 	}
@@ -235,8 +239,8 @@ IO_Flow_Base::IO_Flow_Base(const sim_object_id_type &name, uint16_t flow_id, LHA
 				next_progress_step += 5;
 		}
 
-		if (Simulator->Time() > next_logging_milestone) {
-			log_file << Simulator->Time() / SIM_TIME_TO_MICROSECONDS_COEFF << "\t" << Get_device_response_time_short_term() << "\t" << Get_end_to_end_request_delay_short_term() << std::endl;
+		if (enabled_logging && (Simulator->Time() > next_logging_milestone || (total_requests_to_be_generated > 0 && STAT_serviced_request_count == total_requests_to_be_generated))) {
+			Write_checkpoint();
 			STAT_sum_device_response_time_short_term = 0;
 			STAT_sum_request_delay_short_term = 0;
 			STAT_serviced_request_count_short_term = 0;
@@ -364,8 +368,8 @@ IO_Flow_Base::IO_Flow_Base(const sim_object_id_type &name, uint16_t flow_id, LHA
 			next_progress_step += 5;
 		}
 
-		if (Simulator->Time() > next_logging_milestone) {
-			log_file << Simulator->Time() / SIM_TIME_TO_MICROSECONDS_COEFF << "\t" << Get_device_response_time_short_term() << "\t" << Get_end_to_end_request_delay_short_term() << std::endl;
+		if (enabled_logging && (Simulator->Time() > next_logging_milestone || (total_requests_to_be_generated > 0 && STAT_serviced_request_count == total_requests_to_be_generated))) {
+			Write_checkpoint();
 			STAT_sum_device_response_time_short_term = 0;
 			STAT_sum_request_delay_short_term = 0;
 			STAT_serviced_request_count_short_term = 0;
@@ -511,9 +515,19 @@ IO_Flow_Base::IO_Flow_Base(const sim_object_id_type &name, uint16_t flow_id, LHA
 		return (uint32_t)(STAT_sum_device_response_time_short_term / STAT_serviced_request_count_short_term / SIM_TIME_TO_MICROSECONDS_COEFF);
 	}
 
+    void IO_Flow_Base::Write_checkpoint()
+    {
+        using SSD_Components::Stats;
+        log_file << Simulator->Time() / SIM_TIME_TO_MICROSECONDS_COEFF << "\t"
+                 << Get_device_response_time_short_term() << "\t" << Get_end_to_end_request_delay_short_term() << "\t"
+                 << Simulator->Time() << "\t" << STAT_serviced_request_count << "\t" << STAT_generated_request_count << "\t"
+                 << STAT_sum_request_delay << "\t" << STAT_sum_device_response_time << "\t" << STAT_transferred_bytes_read << "\t"
+                 << Stats::total_readTR_CMT_queries << "\t" << Stats::readTR_CMT_miss << "\t" << Stats::Total_flash_reads_for_mapping << "\n";
+    }
+
 	uint32_t IO_Flow_Base::Get_end_to_end_request_delay_short_term()
 	{
-		if (STAT_serviced_request_count == 0) {
+		if (STAT_serviced_request_count_short_term == 0) {
 			return 0;
 		}
 
@@ -522,6 +536,19 @@ IO_Flow_Base::IO_Flow_Base(const sim_object_id_type &name, uint16_t flow_id, LHA
 	
 	void IO_Flow_Base::Report_results_in_XML(std::string name_prefix, Utils::XmlWriter& xmlwriter)
 	{
+        if (enabled_logging) { Write_checkpoint(); log_file.flush(); }
+        std::cerr << "HOST_EXIT flow=" << flow_id << " generated=" << STAT_generated_request_count
+                  << " completed=" << STAT_serviced_request_count << " waiting=" << waiting_requests.size()
+                  << " software_map_entries=" << nvme_software_request_queue.size()
+                  << " sq_head=" << nvme_queue_pair.Submission_queue_head << " sq_tail=" << nvme_queue_pair.Submission_queue_tail << std::endl;
+        std::cerr << "FTL_EXIT read_entries_created_online=" << SSD_Components::Stats::Read_entries_created_online
+                  << " released_from_lpa_barrier=" << SSD_Components::Stats::User_transactions_released_from_LPA_barrier
+                  << " gc_executions=" << SSD_Components::Stats::Total_gc_executions << std::endl;
+        for (auto &entry : nvme_software_request_queue) {
+            if (entry.second) std::cerr << "HOST_PENDING cid=" << entry.first << " lba=" << entry.second->Start_LBA
+                << " arrived_ns=" << entry.second->Arrival_time << " enqueued_ns=" << entry.second->Enqueue_time << std::endl;
+        }
+
 		std::string tmp = name_prefix + ".IO_Flow";
 		xmlwriter.Write_open_tag(tmp);
 

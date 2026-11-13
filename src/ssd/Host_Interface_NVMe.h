@@ -46,6 +46,7 @@ class Input_Stream_Manager_NVMe : public Input_Stream_Manager_Base
 public:
 	Input_Stream_Manager_NVMe(Host_Interface_Base *host_interface, uint16_t queue_fetch_szie);
 	unsigned int Queue_fetch_size;
+    void Report_exit_diagnostics(stream_id_type id);
 	stream_id_type Create_new_stream(IO_Flow_Priority_Class::Priority priority_class, LHA_type start_logical_sector_address, LHA_type end_logical_sector_address,
 									 uint64_t submission_queue_base_address, uint16_t submission_queue_size,
 									 uint64_t completion_queue_base_address, uint16_t completion_queue_size);

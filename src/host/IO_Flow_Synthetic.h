@@ -18,7 +18,7 @@ public:
 					  Utils::Request_Generator_Type generator_type, sim_time_type Average_inter_arrival_time_nano_sec, unsigned int average_number_of_enqueued_requests,
 					  bool generate_aligned_addresses, unsigned int alignment_value,
 					  int seed, sim_time_type stop_time, double initial_occupancy_ratio, unsigned int total_req_count, HostInterface_Types SSD_device_type, PCIe_Root_Complex *pcie_root_complex, SATA_HBA *sata_hba,
-					  bool enabled_logging, sim_time_type logging_period, std::string logging_file_path);
+					  bool enabled_logging, sim_time_type logging_period, std::string logging_file_path, LHA_type exact_working_set_sectors = 0);
 	~IO_Flow_Synthetic();
 	Host_IO_Request *Generate_next_request();
 	void NVMe_consume_io_request(Completion_Queue_Entry *);
@@ -29,9 +29,12 @@ public:
 	void Get_statistics(Utils::Workload_Statistics &stats, LPA_type (*Convert_host_logical_address_to_device_address)(LHA_type lha),
 						page_status_type (*Find_NVM_subunit_access_bitmap)(LHA_type lha));
 
+	bool Precondition_full_working_set = false;
+
 private:
 	double read_ratio;
 	double working_set_ratio;
+    bool exact_address_span = false;
 	Utils::RandomGenerator *random_request_type_generator;
 	int random_request_type_generator_seed;
 	Utils::Address_Distribution_Type address_distribution;

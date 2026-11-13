@@ -315,6 +315,25 @@ namespace SSD_Components
 						}
 					}
 				}
+
+				//Optional: guarantee that every page the flow can read has been written, so no read touches an unwritten LPA
+				//(which would otherwise allocate a page online, dirty the CMT, and trigger translation writebacks/GC).
+				//LPAs here are relative to Min_LHA, matching the loop above. Random occupancy outside the working set is kept.
+				if (stat->Precondition_full_working_set) {
+					const page_status_type full_page = (page_size_in_sectors >= 64) ? ~((page_status_type)0) : ((((page_status_type)1) << page_size_in_sectors) - 1);
+					const LPA_type last_lpa = Convert_host_logical_address_to_device_address(stat->Max_LHA - stat->Min_LHA);
+					LPA_type added = 0;
+					for (LPA_type lpa = 0; lpa <= last_lpa; lpa++) {
+						auto itr = lpa_set_for_preconditioning.find(lpa);
+						if (itr == lpa_set_for_preconditioning.end()) {
+							lpa_set_for_preconditioning[lpa] = full_page;
+							added++;
+						} else {
+							itr->second |= full_page;
+						}
+					}
+					std::cerr << "PRECONDITION_FULL_WORKING_SET stream=" << stat->Stream_id << " lpas=" << (last_lpa + 1) << " added=" << added << std::endl;
+				}
 			} else {
 				//Step 1-1: Read LPAs are preferred for steady-state since each read should be written before the actual access
 				for (auto itr = stat->Write_read_shared_addresses.begin(); itr != stat->Write_read_shared_addresses.end(); itr++) {

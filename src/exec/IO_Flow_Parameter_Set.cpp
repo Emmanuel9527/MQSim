@@ -229,6 +229,14 @@ void IO_Flow_Parameter_Set_Synthetic::XML_serialize(Utils::XmlWriter& xmlwriter)
 	std::string val = std::to_string(Working_Set_Percentage);
 	xmlwriter.Write_attribute_string(attr, val);
 
+	attr = "Working_Set_Sectors";
+	val = std::to_string(Working_Set_Sectors);
+	xmlwriter.Write_attribute_string(attr, val);
+
+	attr = "Precondition_Full_Working_Set";
+	val = (Precondition_Full_Working_Set ? "true" : "false");
+	xmlwriter.Write_attribute_string(attr, val);
+
 	attr = "Synthetic_Generator_Type";
 	switch (Synthetic_Generator_Type) {
 		case Utils::Request_Generator_Type::BANDWIDTH:
@@ -328,7 +336,13 @@ void IO_Flow_Parameter_Set_Synthetic::XML_deserialize(rapidxml::xml_node<> *node
 			if (strcmp(param->name(), "Working_Set_Percentage") == 0) {
 				std::string val = param->value();
 				Working_Set_Percentage = std::stoi(val);
-			} else if (strcmp(param->name(), "Synthetic_Generator_Type") == 0) {
+			} else if (strcmp(param->name(), "Working_Set_Sectors") == 0) {
+                Working_Set_Sectors = std::stoull(param->value());
+            } else if (strcmp(param->name(), "Precondition_Full_Working_Set") == 0) {
+                std::string val = param->value();
+                std::transform(val.begin(), val.end(), val.begin(), ::toupper);
+                Precondition_Full_Working_Set = (val.compare("TRUE") == 0);
+            } else if (strcmp(param->name(), "Synthetic_Generator_Type") == 0) {
 				std::string val = param->value();
 				std::transform(val.begin(), val.end(), val.begin(), ::toupper);
 				if (strcmp(val.c_str(), "BANDWIDTH") == 0) {

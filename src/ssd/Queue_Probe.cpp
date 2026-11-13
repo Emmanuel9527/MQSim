@@ -37,6 +37,13 @@ namespace SSD_Components
 		sim_time_type et = currentObjectsInQueue[transaction];
 		currentObjectsInQueue.erase(transaction);
 		sim_time_type tc = Simulator->Time() - et;
+        if (observe_phy_data_out) {
+            transaction->OBS_phy_data_out_ns += tc;
+            transaction->OBS_phy_data_out_departures++;
+        } else {
+            transaction->OBS_tsu_queue_ns += tc;
+            transaction->OBS_tsu_departures++;
+        }
 		totalWaitingTime += tc;
 		if (tc > maxWaitingTime)
 			maxWaitingTime = tc;

@@ -26,6 +26,12 @@ namespace SSD_Components
 		//std::list<NVM_Transaction*>::iterator RelatedNodeInQueue;//Just used for high performance linkedlist insertion/deletion
 
 		sim_time_type Issue_time;
+        // Observations only. Mapping membership and TSU queue residence, in ns.
+        sim_time_type OBS_phy_data_out_ns = 0;
+        unsigned int OBS_phy_data_out_departures = 0;
+        sim_time_type OBS_mapping_enter_ns = 0, OBS_mapping_wait_ns = 0, OBS_tsu_queue_ns = 0;
+        unsigned int OBS_mapping_episodes = 0, OBS_tsu_departures = 0;
+        bool OBS_mapping_active = false;
 		/* Used to calculate service time and transfer time for a normal read/program operation used to respond to the host IORequests.
 		In other words, these variables are not important if FlashTransactions is used for garbage collection.*/
 		sim_time_type STAT_execution_time, STAT_transfer_time;

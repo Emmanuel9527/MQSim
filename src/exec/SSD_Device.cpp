@@ -94,7 +94,8 @@ SSD_Device::SSD_Device(Device_Parameter_Set *parameters, std::vector<IO_Flow_Par
 				}
 				channels[channel_cntr] = new SSD_Components::ONFI_Channel_NVDDR2(channel_cntr, parameters->Chip_No_Per_Channel,
 																				 chips, parameters->Flash_Channel_Width,
-																				 (sim_time_type)((double)1000 / parameters->Channel_Transfer_Rate) * 2, (sim_time_type)((double)1000 / parameters->Channel_Transfer_Rate) * 2);
+																				 SSD_Components::Channel_transfer_ns(2, 1, parameters->Channel_Transfer_Rate), SSD_Components::Channel_transfer_ns(2, 1, parameters->Channel_Transfer_Rate));
+				channels[channel_cntr]->TransferRateMTs = parameters->Channel_Transfer_Rate;
 				device->Channels.push_back(channels[channel_cntr]); //Channels should not be added to the simulator core, they are passive object that do not handle any simulation event
 			}
 
@@ -309,6 +310,7 @@ SSD_Device::SSD_Device(Device_Parameter_Set *parameters, std::vector<IO_Flow_Par
 															 parameters->Flash_Parameters.Block_No_Per_Plane, parameters->Flash_Parameters.Page_No_Per_Block,
 															 parameters->Flash_Parameters.Page_Capacity / SECTOR_SIZE_IN_BYTE, parameters->Use_Copyback_for_GC, max_rho, 10,
 															 parameters->Seed++);
+		gcwl->GC_enabled = parameters->GC_Enabled;
 		Simulator->AddObject(gcwl);
 		fbm->Set_GC_and_WL_Unit(gcwl);
 		ftl->GC_and_WL_Unit = gcwl;

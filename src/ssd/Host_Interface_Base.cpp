@@ -102,6 +102,15 @@ namespace SSD_Components
 		switch (transaction->Type)
 		{
 			case Transaction_Type::READ:
+                input_streams[transaction->Stream_id]->OBS_phy_data_out_ns += transaction->OBS_phy_data_out_ns;
+                input_streams[transaction->Stream_id]->OBS_phy_data_out_departures += transaction->OBS_phy_data_out_departures;
+                input_streams[transaction->Stream_id]->OBS_read_completed++;
+                input_streams[transaction->Stream_id]->OBS_mapping_read_count += transaction->OBS_mapping_episodes > 0;
+                input_streams[transaction->Stream_id]->OBS_mapping_episodes += transaction->OBS_mapping_episodes;
+                input_streams[transaction->Stream_id]->OBS_tsu_departures += transaction->OBS_tsu_departures;
+                input_streams[transaction->Stream_id]->OBS_open_mapping_at_completion += transaction->OBS_mapping_active;
+                input_streams[transaction->Stream_id]->OBS_mapping_ns += transaction->OBS_mapping_wait_ns;
+                input_streams[transaction->Stream_id]->OBS_tsu_ns += transaction->OBS_tsu_queue_ns;
 				this->input_streams[transaction->Stream_id]->STAT_sum_of_read_transactions_execution_time += transaction->STAT_execution_time;
 				this->input_streams[transaction->Stream_id]->STAT_sum_of_read_transactions_transfer_time += transaction->STAT_transfer_time;
 				this->input_streams[transaction->Stream_id]->STAT_sum_of_read_transactions_waiting_time += (Simulator->Time() - transaction->Issue_time) - transaction->STAT_execution_time - transaction->STAT_transfer_time;
@@ -115,6 +124,20 @@ namespace SSD_Components
 				break;
 		}
 	}
+
+    void Input_Stream_Manager_Base::Report_read_wait_observations(stream_id_type id, Utils::XmlWriter& writer)
+    {
+        auto s = input_streams[id];
+        { std::string name = "Observed_Read_PHY_Data_Out_Queue_Sum_NS", value = std::to_string(s->OBS_phy_data_out_ns); writer.Write_attribute_string(name, value); }
+        { std::string name = "Observed_Read_PHY_Data_Out_Departures", value = std::to_string(s->OBS_phy_data_out_departures); writer.Write_attribute_string(name, value); }
+        { std::string name = "Observed_Read_Completed", value = std::to_string(s->OBS_read_completed); writer.Write_attribute_string(name, value); }
+        { std::string name = "Observed_Read_Mapping_Blocked_Count", value = std::to_string(s->OBS_mapping_read_count); writer.Write_attribute_string(name, value); }
+        { std::string name = "Observed_Read_Mapping_Episodes", value = std::to_string(s->OBS_mapping_episodes); writer.Write_attribute_string(name, value); }
+        { std::string name = "Observed_Read_TSU_Departures", value = std::to_string(s->OBS_tsu_departures); writer.Write_attribute_string(name, value); }
+        { std::string name = "Observed_Read_Open_Mapping_At_Completion", value = std::to_string(s->OBS_open_mapping_at_completion); writer.Write_attribute_string(name, value); }
+        { std::string name = "Observed_Read_Mapping_Wait_Sum_NS", value = std::to_string(s->OBS_mapping_ns); writer.Write_attribute_string(name, value); }
+        { std::string name = "Observed_Read_TSU_Queue_Sum_NS", value = std::to_string(s->OBS_tsu_ns); writer.Write_attribute_string(name, value); }
+    }
 
 	uint32_t Input_Stream_Manager_Base::Get_average_read_transaction_turnaround_time(stream_id_type stream_id)//in microseconds
 	{

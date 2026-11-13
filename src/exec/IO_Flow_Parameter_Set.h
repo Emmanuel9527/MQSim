@@ -32,6 +32,8 @@ class IO_Flow_Parameter_Set_Synthetic : public IO_Flow_Parameter_Set
 {
 public:
 	IO_Flow_Parameter_Set_Synthetic() { this->Type = Flow_Type::SYNTHETIC; }
+	bool Precondition_Full_Working_Set = false; // Optional; true writes every page of the working set during preconditioning
+	unsigned long long Working_Set_Sectors = 0; // Optional exact span in 512-byte sectors; zero preserves legacy percentage mode
 	unsigned int Working_Set_Percentage;//Percentage of available storage space that is accessed
 	Utils::Request_Generator_Type Synthetic_Generator_Type;
 	char Read_Percentage;

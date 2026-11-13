@@ -436,6 +436,13 @@ bool TSU_Priority_OutOfOrder::service_read_transaction(NVM::FlashMemory::Flash_C
 
 Flash_Transaction_Queue *TSU_Priority_OutOfOrder::get_next_write_service_queue(NVM::FlashMemory::Flash_Chip *chip)
 {
+    //Mapping (translation page) writes were enqueued in MappingWriteTRQueue but never dequeued by any path,
+    //so DepartingMappingEntries never drained. Serve them first, mirroring mapping-read priority in service_read_transaction.
+    if (MappingWriteTRQueue[chip->ChannelID][chip->ChipID].size() > 0)
+    {
+        return &MappingWriteTRQueue[chip->ChannelID][chip->ChipID];
+    }
+
     if (UserWriteTRQueue[chip->ChannelID][chip->ChipID][IO_Flow_Priority_Class::URGENT].size() > 0)
     {
         return &UserWriteTRQueue[chip->ChannelID][chip->ChipID][IO_Flow_Priority_Class::URGENT];

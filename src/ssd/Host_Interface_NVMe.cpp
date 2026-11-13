@@ -419,6 +419,30 @@ uint16_t Host_Interface_NVMe::Get_completion_queue_depth()
 	return completion_queue_depth;
 }
 
+void Input_Stream_Manager_NVMe::Report_exit_diagnostics(stream_id_type id)
+{
+    auto s = (Input_Stream_NVMe*)input_streams[id];
+    std::cerr << "DEVICE_EXIT stream=" << id << " sq_head=" << s->Submission_head
+        << " sq_tail=" << s->Submission_tail << " sq_head_informed=" << s->Submission_head_informed_to_host
+        << " inflight=" << s->On_the_fly_requests << " fetched_reads=" << s->STAT_number_of_read_requests
+        << " read_transactions=" << s->STAT_number_of_read_transactions
+        << " waiting=" << s->Waiting_user_requests.size() << " completed_pending=" << s->Completed_user_requests.size()
+        << " cq_head=" << s->Completion_head << " cq_tail=" << s->Completion_tail << std::endl;
+    for (auto req : s->Waiting_user_requests) {
+        auto sqe = (Submission_Queue_Entry*)req->IO_command_info;
+        std::cerr << "DEVICE_PENDING cid=" << sqe->Command_Identifier << " lba=" << req->Start_LBA
+            << " transactions=" << req->Transaction_list.size() << " fetched_ns=" << req->STAT_InitiationTime << std::endl;
+        for (auto tr : req->Transaction_list) {
+            auto flash = (NVM_Transaction_Flash*)tr;
+            std::cerr << "TRANSACTION_PENDING cid=" << sqe->Command_Identifier << " lpa=" << flash->LPA
+                << " physical_determined=" << flash->Physical_address_determined
+                << " mapping_active=" << tr->OBS_mapping_active << " mapping_episodes=" << tr->OBS_mapping_episodes
+                << " mapping_enter_ns=" << tr->OBS_mapping_enter_ns << " tsu_departures=" << tr->OBS_tsu_departures
+                << " phy_departures=" << tr->OBS_phy_data_out_departures << std::endl;
+        }
+    }
+}
+
 void Host_Interface_NVMe::Report_results_in_XML(std::string name_prefix, Utils::XmlWriter &xmlwriter)
 {
 	std::string tmp = name_prefix + ".HostInterface";
@@ -436,6 +460,9 @@ void Host_Interface_NVMe::Report_results_in_XML(std::string name_prefix, Utils::
 		attr = "Stream_ID";
 		val = std::to_string(stream_id);
 		xmlwriter.Write_attribute_string(attr, val);
+
+		((Input_Stream_Manager_NVMe*)input_stream_manager)->Report_exit_diagnostics(stream_id);
+		input_stream_manager->Report_read_wait_observations(stream_id, xmlwriter);
 
 		attr = "Average_Read_Transaction_Turnaround_Time";
 		val = std::to_string(input_stream_manager->Get_average_read_transaction_turnaround_time(stream_id));

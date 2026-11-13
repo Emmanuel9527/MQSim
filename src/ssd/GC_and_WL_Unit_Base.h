@@ -58,6 +58,7 @@ namespace SSD_Components
 		bool Use_dynamic_wearleveling();
 		bool Use_static_wearleveling();
 		bool Stop_servicing_writes(const NVM::FlashMemory::Physical_Page_Address& plane_address);
+		bool GC_enabled = true;//Set from the GC_Enabled device parameter; false means GC is never triggered
 	protected:
 		GC_Block_Selection_Policy_Type block_selection_policy;
 		static GC_and_WL_Unit_Base * _my_instance;

@@ -17,6 +17,7 @@ namespace SSD_Components
 		static unsigned long IssuedSuspendProgramCMD, IssuedSuspendEraseCMD;
 
 		static unsigned long Total_flash_reads_for_mapping, Total_flash_writes_for_mapping;
+		static unsigned long Read_entries_created_online, User_transactions_released_from_LPA_barrier; // Diagnostics: reads of never-written LPAs; user transactions re-driven after a GC barrier
 		static unsigned long Total_flash_reads_for_mapping_per_stream[MAX_SUPPORT_STREAMS], Total_flash_writes_for_mapping_per_stream[MAX_SUPPORT_STREAMS];
 
 		static unsigned int CMT_hits, readTR_CMT_hits, writeTR_CMT_hits;

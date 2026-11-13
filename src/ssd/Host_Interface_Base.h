@@ -34,7 +34,11 @@ namespace SSD_Components
 	public:
 		Input_Stream_Base();
 		virtual ~Input_Stream_Base();
-		unsigned int STAT_number_of_read_requests;
+		sim_time_type OBS_phy_data_out_ns = 0;
+        uint64_t OBS_phy_data_out_departures = 0;
+        uint64_t OBS_read_completed = 0, OBS_mapping_read_count = 0, OBS_mapping_episodes = 0, OBS_tsu_departures = 0, OBS_open_mapping_at_completion = 0;
+        sim_time_type OBS_mapping_ns = 0, OBS_tsu_ns = 0;
+        unsigned int STAT_number_of_read_requests;
 		unsigned int STAT_number_of_write_requests;
 		unsigned int STAT_number_of_read_transactions;
 		unsigned int STAT_number_of_write_transactions;
@@ -54,6 +58,7 @@ namespace SSD_Components
 		virtual void Handle_arrived_write_data(User_Request* request) = 0;
 		virtual void Handle_serviced_request(User_Request* request) = 0;
 		void Update_transaction_statistics(NVM_Transaction* transaction);
+        void Report_read_wait_observations(stream_id_type stream_id, Utils::XmlWriter& writer);
 		uint32_t Get_average_read_transaction_turnaround_time(stream_id_type stream_id);//in microseconds
 		uint32_t Get_average_read_transaction_execution_time(stream_id_type stream_id);//in microseconds
 		uint32_t Get_average_read_transaction_transfer_time(stream_id_type stream_id);//in microseconds

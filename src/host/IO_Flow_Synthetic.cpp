@@ -13,7 +13,7 @@ IO_Flow_Synthetic::IO_Flow_Synthetic(const sim_object_id_type &name, uint16_t fl
 									 Utils::Request_Generator_Type generator_type, sim_time_type Average_inter_arrival_time_nano_sec, unsigned int average_number_of_enqueued_requests,
 									 bool generate_aligned_addresses, unsigned int alignment_value,
 									 int seed, sim_time_type stop_time, double initial_occupancy_ratio, unsigned int total_req_count, HostInterface_Types SSD_device_type, PCIe_Root_Complex *pcie_root_complex, SATA_HBA *sata_hba,
-									 bool enabled_logging, sim_time_type logging_period, std::string logging_file_path) : IO_Flow_Base(name, flow_id, start_lsa_on_device, LHA_type(start_lsa_on_device + (end_lsa_on_device - start_lsa_on_device) * working_set_ratio), io_queue_id, nvme_submission_queue_size, nvme_completion_queue_size, priority_class, stop_time, initial_occupancy_ratio, total_req_count, SSD_device_type, pcie_root_complex, sata_hba, enabled_logging, logging_period, logging_file_path),
+									 bool enabled_logging, sim_time_type logging_period, std::string logging_file_path, LHA_type exact_working_set_sectors) : IO_Flow_Base(name, flow_id, start_lsa_on_device, LHA_type(start_lsa_on_device + (end_lsa_on_device - start_lsa_on_device) * working_set_ratio), io_queue_id, nvme_submission_queue_size, nvme_completion_queue_size, priority_class, stop_time, initial_occupancy_ratio, total_req_count, SSD_device_type, pcie_root_complex, sata_hba, enabled_logging, logging_period, logging_file_path),
 																														  read_ratio(read_ratio), address_distribution(address_distribution),
 																														  working_set_ratio(working_set_ratio), hot_region_ratio(hot_region_ratio),
 																														  request_size_distribution(request_size_distribution), average_request_size(average_request_size), variance_request_size(variance_request_size),
@@ -29,6 +29,18 @@ IO_Flow_Synthetic::IO_Flow_Synthetic(const sim_object_id_type &name, uint16_t fl
 	random_request_type_generator = new Utils::RandomGenerator(random_request_type_generator_seed);
 	random_address_generator_seed = seed++;
 	random_address_generator = new Utils::RandomGenerator(random_address_generator_seed);
+    if (exact_working_set_sectors != 0) {
+        if (end_lsa_on_device < start_lsa_on_device || exact_working_set_sectors - 1 > end_lsa_on_device - start_lsa_on_device)
+            throw std::invalid_argument("Working_Set_Sectors exceeds allocated flow span");
+        if (request_size_distribution != Utils::Request_Size_Distribution_Type::FIXED || average_request_size == 0 ||
+            !generate_aligned_addresses || alignment_value != average_request_size ||
+            start_lsa_on_device % alignment_value != 0 || exact_working_set_sectors % average_request_size != 0 ||
+            (address_distribution != Utils::Address_Distribution_Type::RANDOM_UNIFORM && address_distribution != Utils::Address_Distribution_Type::STREAMING))
+            throw std::invalid_argument("Exact span requires fixed, request-aligned uniform/streaming workload");
+        this->end_lsa_on_device = start_lsa_on_device + exact_working_set_sectors - 1;
+        this->working_set_ratio = double(exact_working_set_sectors) / (double(end_lsa_on_device - start_lsa_on_device) + 1.0);
+        exact_address_span = true;
+    }
 	if (this->start_lsa_on_device > this->end_lsa_on_device)
 	{
 		throw std::logic_error("Problem in IO Flow Synthetic, the start LBA address is greater than the end LBA address");
@@ -107,7 +119,16 @@ IO_Flow_Synthetic::IO_Flow_Synthetic(const sim_object_id_type &name, uint16_t fl
 				throw std::invalid_argument("Uknown distribution type for requset size.");
 		}
 
-		switch (address_distribution) {
+        if (exact_address_span) {
+            const LHA_type blocks = (end_lsa_on_device - start_lsa_on_device + 1) / request->LBA_count;
+            if (address_distribution == Utils::Address_Distribution_Type::STREAMING) {
+                request->Start_LBA = streaming_next_address;
+                streaming_next_address = request->Start_LBA == end_lsa_on_device - request->LBA_count + 1
+                    ? start_lsa_on_device : request->Start_LBA + request->LBA_count;
+            } else {
+                request->Start_LBA = start_lsa_on_device + random_address_generator->Uniform_ulong(0, blocks - 1) * request->LBA_count;
+            }
+        } else switch (address_distribution) {
 			case Utils::Address_Distribution_Type::STREAMING:
 				request->Start_LBA = streaming_next_address;
 				if (request->Start_LBA + request->LBA_count > end_lsa_on_device) {
@@ -199,7 +220,7 @@ IO_Flow_Synthetic::IO_Flow_Synthetic(const sim_object_id_type &name, uint16_t fl
 		IO_Flow_Base::Start_simulation();
 
 		if (address_distribution == Utils::Address_Distribution_Type::STREAMING) {
-			streaming_next_address = random_address_generator->Uniform_ulong(start_lsa_on_device, end_lsa_on_device);
+			streaming_next_address = exact_address_span ? start_lsa_on_device : random_address_generator->Uniform_ulong(start_lsa_on_device, end_lsa_on_device);
 			if (generate_aligned_addresses) {
 				streaming_next_address -= streaming_next_address % alignment_value;
 			}
@@ -258,5 +279,6 @@ IO_Flow_Synthetic::IO_Flow_Synthetic(const sim_object_id_type &name, uint16_t fl
 		stats.Average_inter_arrival_time_nano_sec = Average_inter_arrival_time_nano_sec;
 		stats.Min_LHA = start_lsa_on_device;
 		stats.Max_LHA = end_lsa_on_device;
+		stats.Precondition_full_working_set = Precondition_full_working_set;
 	}
 }

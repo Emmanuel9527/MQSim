@@ -15,6 +15,7 @@ namespace SSD_Components
 		Flash_Transaction_Queue();
 		Flash_Transaction_Queue(std::string id);
 		void Set_id(std::string id);
+        void Observe_phy_data_out() { RequestQueueProbe.observe_phy_data_out = true; }
 		void push_back(NVM_Transaction_Flash* const&);
 		void push_front(NVM_Transaction_Flash* const&);
 		std::list<NVM_Transaction_Flash*>::iterator insert(list<NVM_Transaction_Flash*>::iterator position, NVM_Transaction_Flash* const& transaction);

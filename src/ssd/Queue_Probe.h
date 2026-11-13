@@ -22,6 +22,7 @@ namespace SSD_Components
 	{
 	public:
 		Queue_Probe();
+        bool observe_phy_data_out = false;
 		void EnqueueRequest(NVM_Transaction* transaction);
 		void DequeueRequest(NVM_Transaction* transaction);
 		void ResetEpochStatistics();

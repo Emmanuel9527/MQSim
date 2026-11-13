@@ -80,6 +80,7 @@ namespace MQSimEngine
 		Sim_Event* ev = NULL;
 		while (true) {
 			if (_EventList->Count == 0 || stop) {
+                std::cerr << "ENGINE_EXIT time_ns=" << _sim_time << " pending_events=" << _EventList->Count << " stop_flag=" << stop << std::endl;
 				break;
 			}
 
