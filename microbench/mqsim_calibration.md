@@ -986,3 +986,29 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 - 逐點中位數不是單一裝置狀態下的 QD 曲線，不應直接拿來調 NAND 參數。拿模型去追 25k 天花板，等於用 NAND 拓撲去解釋一個可能來自控制器狀態的限制。
 - 對 NAND transaction batching 的研究來說，兩個狀態的 knee 完全不同（慢狀態約 QD16–32，快狀態 QD64 以上仍在長），分批結論會依狀態而異。需要先知道哪個狀態代表 DiskANN 實際執行時的裝置。
 - 新增 `microbench/state_probe.sh` 與 `microbench/analyze_state_probe.py`：在 fio 量測期間以 1 Hz 記錄溫度（hwmon）、`/proc/diskstats` 的主機讀寫，並在每個階段前後快照 `nvme smart-log`（thermal transition 計數與時間）、電源狀態、HMB、APST。
+
+## state_probe_20261114 結果：排除溫度與主機寫入
+
+資料：`results/state_probe_20261114`，分析：`analyze_state_probe.py`。
+
+- 溫度：全程 26.9–42.9°C。HCTM 門檻 TMT1=75°C、TMT2=80°C；`thm_temp1/2_trans_count` 與 total time 從頭到尾都是 0。**不是熱限速。**
+- 主機對 nvme0n1 的寫入：慢狀態大多數秒數為 0 writes/s。qd128 期間另有約 641MB 主機寫入（`data_units_written` +1252），但 qd16_a／qd16_b 寫入幾乎為 0 仍然是慢狀態。**不是同碟背景寫入造成。**
+- 電源狀態全程 PS0。HMB 已啟用，HSIZE=10240 頁（40MiB），等於 `hmpre`=`hmmin`，裝置要的大小有全部拿到，OS 上限 128MiB 沒卡住。
+- APST 開啟：閒置 100ms 進 PS3（exlat 10ms），2s 進 PS4（exlat 41ms）。
+
+每個 run 一開始都是快狀態，之後驟降：
+
+| run | 前一階段 | 快狀態 | 之後 |
+|---|---|---|---|
+| qd16_a | idle 120s | 0–3s，約 105k | 慢 18k；77–78s、196–199s 短暫回到快 |
+| qd1 | idle 120s | 0–73s，約 10k | 74–114s 慢 2–3k，115s 起又回快 |
+| qd128 | qd1（中間只有 fio 啟動的空檔） | 0–8s，約 250k | 第 8s 掉到 102k，之後 20–25k |
+| qd16_b | idle 120s | 0–1s，約 130k | 慢 18k |
+
+- 快狀態的長度不能用 I/O 數（0.19M–2.1M）或時間解釋，轉換是驟降而不是漸變。
+- qd128 前面只有 fio 啟動的短空檔（數百 ms，超過 APST 的 100ms 門檻），也從快狀態開始。舊基準每個 run 有 10s ramp，高 QD 時快狀態大多被 ramp 吃掉，這說明了為什麼舊資料裡快狀態秒數那麼少。
+- 也有不需要閒置就回到快狀態的情況（qd1 第 115s、qd16_a 第 77s）。所以觸發條件不只閒置，比較像控制器內部的背景工作（例如 read disturb 回收、SLC→TLC 搬移、巡檢）佔用資源，閒置／睡眠時暫停或做完一部分。SMART 只統計主機寫入，看不到 NAND 內部寫入，無法直接證實。
+
+### 對 batching 研究的意義
+
+如果閒置空檔能讓裝置回到快狀態，那麼「批次之間的空檔」就會改變裝置狀態本身，而不只是改變排隊。這正是 NAND_TRANSACTION_BATCHING.md 裡「inter-batch gaps」那條假說要面對的混淆。下一步用 `gap_probe.sh`：先連續負載 30s 進入慢狀態，再以「2s 負載＋G ms 閒置」掃 G=0/20/50/100/200/500/1000/3000，APST 開／關各一輪（透過 `pm_qos_latency_tolerance_us`，結束時還原）。

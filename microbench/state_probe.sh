@@ -13,6 +13,9 @@ IDLE_S="${IDLE_S:-120}"
 if [[ -e "$OUT" ]]; then echo "Refusing to overwrite existing $OUT" >&2; exit 1; fi
 mkdir -p "$OUT"
 sudo -v  # nvme smart-log/get-feature need root; ask once up front.
+if [[ -b "$FILE" ]]; then FILE_BYTES=$(sudo blockdev --getsize64 "$FILE"); else FILE_BYTES=$(stat -c %s "$FILE"); fi
+SIZE_BYTES="${SIZE_BYTES:-$(( FILE_BYTES < 34359738368 ? FILE_BYTES : 34359738368 ))}"
+echo "input=$FILE file_bytes=$FILE_BYTES read_span_bytes=$SIZE_BYTES" | tee "$OUT/input.txt"
 
 snapshot() {  # $1 = tag
     sudo nvme smart-log "/dev/${DEV}" -o json > "$OUT/smart_$1.json"
@@ -43,7 +46,7 @@ run_fio() {  # $1 = tag, $2 = iodepth, $3 = runtime seconds
     echo "$1" > "$OUT/.phase"
     fio --readonly --output-format=json --output="$OUT/fio_$1.json" \
         --name="$1" --ioengine=libaio --direct=1 --rw=randread --bs=4096 \
-        --filename="$FILE" --allow_file_create=0 --size=34359738368 --offset=0 \
+        --filename="$FILE" --allow_file_create=0 --size="$SIZE_BYTES" --offset=0 \
         --iodepth="$2" --iodepth_batch_submit=1 --iodepth_batch_complete_min=1 --iodepth_batch_complete_max=1 \
         --time_based=1 --runtime="$3" --ramp_time=0 --norandommap=1 --randrepeat=1 --randseed=20261114 \
         --invalidate=0 --thread=1 --numjobs=1 \
