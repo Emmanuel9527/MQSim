@@ -21,9 +21,12 @@ def main():
     metadata=json.loads((root/'metadata.json').read_text());summaries=[];windows=[]
     for item in metadata['schedule']:
         label=f'r{item["repeat"]}_qd{item["qd"]}'
-        logs=list((root/label).glob('iops_iops.*.log'))
-        if len(logs)!=1:raise ValueError(f'{label}: expected one fio IOPS log')
-        data=[(int(r[0]),float(r[1])) for r in csv.reader(logs[0].open()) if int(r[2])==0]
+        logs=sorted((root/label).glob('iops_iops.*.log'))
+        if not logs:raise ValueError(f'{label}: no fio IOPS log')
+        # Multi-job runs write one log per job; sum them window by window on the first job's clock.
+        per_job=[[(int(r[0]),float(r[1])) for r in csv.reader(p.open()) if int(r[2])==0] for p in logs]
+        n=min(len(d) for d in per_job)
+        data=[(per_job[0][i][0],sum(d[i][1] for d in per_job)) for i in range(n)]
         # The first sample has no previous timestamp; final sample may be partial.
         # Reject irregular windows instead of treating them as full seconds.
         retained=[(t,v) for (prev,_),(t,v) in zip(data[:-2],data[1:-1]) if 950<=t-prev<=1050]

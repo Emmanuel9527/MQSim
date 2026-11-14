@@ -16,7 +16,8 @@ args=(--qds "${QD_LIST[@]}" --runtime "${RUNTIME:-300}" --ramp "${RAMP:-30}"
       --out "${RAM_ROOT}/${RUN_NAME}" --archive-root "$ARCHIVE_ROOT")
 if [[ -n "${INPUT_FILE:-}" ]]; then args+=(--file "$INPUT_FILE"); fi
 if [[ -n "${CPU:-}" ]]; then args+=(--cpu "$CPU"); fi
-echo "4KiB random READ, one libaio job; no writes to the input file."
+if [[ -n "${JOBS:-}" ]]; then args+=(--jobs "$JOBS"); fi
+echo "4KiB random READ, ${JOBS:-1} libaio job(s) sharing each QD; no writes to the input file."
 echo "Final results: ${ARCHIVE_ROOT}/${RUN_NAME}"
 echo "QD sweep estimates closed-loop behavior, not fixed-rate burst response."
 if [[ "$MODE" == --check ]]; then

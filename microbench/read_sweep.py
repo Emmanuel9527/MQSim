@@ -41,10 +41,11 @@ filename={args.file}
 allow_file_create=0
 size={args.size_gib * 1024**3}
 offset=0
-numjobs=1
+numjobs={args.jobs}
 thread=1
-iodepth={qd}
-iodepth_low={qd}
+iodepth={qd // args.jobs}
+iodepth_low={qd // args.jobs}
+{'group_reporting=1' if args.jobs > 1 else ''}
 iodepth_batch_submit=1
 iodepth_batch_complete_min=1
 iodepth_batch_complete_max=1
@@ -150,6 +151,7 @@ def parser():
     p.add_argument('--ramp', type=int, default=10, help='Unmeasured warmup seconds per run')
     p.add_argument('--size-gib', type=int, default=32)
     p.add_argument('--block-kib', type=int, default=4)
+    p.add_argument('--jobs', type=int, default=1, help='fio jobs sharing each total QD (QD must divide evenly)')
     p.add_argument('--seed', type=int, default=20261112)
     p.add_argument('--cpu', type=int, help='Optional fixed logical CPU; default leaves host policy unchanged')
     p.add_argument('--run', action='store_true', help='Execute; without this flag only preflight and plan')
@@ -163,6 +165,8 @@ def main():
         raise SystemExit('QD, repetitions, runtime and sizes must be positive')
     if len(set(args.qds)) != len(args.qds) or args.ramp < 0:
         raise SystemExit('QDs must be unique; ramp must be nonnegative')
+    if args.jobs < 1 or any(q % args.jobs for q in args.qds):
+        raise SystemExit('Every QD must be a positive multiple of --jobs')
     if args.cpu is not None and args.cpu not in os.sched_getaffinity(0):
         raise SystemExit('CPU is not in this process allowed affinity set')
     if args.block_kib & (args.block_kib - 1):

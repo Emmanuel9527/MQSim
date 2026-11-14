@@ -1033,3 +1033,24 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 - 和 GM7 快狀態比：QD1 13.0k vs 10k，QD16 188k vs 126k，QD128 426k vs 約 250k（GM7 只有 QD64 的 5 秒）。
 - 推論：GM7 的雙狀態是該顆裝置（DRAM-less／HMB、MAP1602 韌體）的行為，不是 Linux 或量測方法造成。兩顆的控制器也不同，無法只歸因於 DRAM 有無。
 - `read_sweep.py` 的裝置檢查改為會追 device-mapper 的 `slaves/`，讓 LVM 上的檔案也能通過（原本只接受分割區直接在 nvme0n1 上）。
+
+## T500 單 job QD 掃描（mqsim_long_20261113T233458Z_a3018661）
+
+伺服器 Crucial T500 2TB，讀取 `/home/user/datasets/SIFT1B/bigann_base.bvecs.gz` 前 32GiB，4KiB 隨機讀，1 個 libaio job，每點 60s＋10s ramp，3 次重複。CPU：AMD Ryzen 7 7700（16 執行緒）。
+
+| QD | IOPS 中位數 | 平均延遲 µs | p99 µs | fio usr+sys CPU % | 每秒 IOPS 範圍 |
+|---:|---:|---:|---:|---:|---|
+| 1 | 12,991 | 76.7 | 80 | 5.5 | 13k |
+| 2 | 24,470 | 81.5 | 92 | 6.8 | 24–25k |
+| 4 | 49,119 | 81.3 | 112 | 12.2 | 49k |
+| 8 | 96,210 | 83.0 | 124 | 23.3 | 95–97k |
+| 16 | 188,083 | 84.9 | 136 | 49.6 | 186–189k |
+| 32 | 358,228 | 89.1 | 167 | 86.1 | 349–364k |
+| 64 | 425,757 | 150.1 | 232 | 99.5 | 421–432k |
+| 128 | 424,370 | 301.4 | 391 | 99.6 | 418–431k |
+
+- 三次重複的 max/min 比都 ≤1.014，每秒資料沒有狀態切換，T500 是穩定的單一狀態。
+- QD1→32 幾乎線性擴張（每次加倍約 1.9–2.0 倍），延遲只從 77µs 升到 89µs。
+- **QD64/128 的 425k 上限是主機端限制，不是 SSD**：fio usr+sys ≈ 99.5%，等於單一 fio 執行緒用滿一顆核心；context switch 從約 300 萬掉到約 3 千（執行緒一直在忙，不再睡眠）。QD128 延遲剛好是 QD64 的 2 倍，是排在主機端的佇列。
+- QD32 時 CPU 已 86%，延遲 89µs 可能也帶一點主機成分。可視為裝置行為的範圍：QD1–16 確定，QD32 待多 job 對照確認。
+- 尚未觀察到 T500 本身的轉折點。`read_sweep.py`／`run_long_baseline.sh` 新增 `--jobs`／`JOBS=`（每個 total QD 平均分給多個 job，`group_reporting=1`）；`check_convergence.py` 改為逐窗加總多個 job 的 IOPS log。
