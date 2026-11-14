@@ -501,7 +501,19 @@ namespace SSD_Components {
 			channels[channel_id]->SetStatus(BusChannelStatus::BUSY, targetChip);
 
 			return;
-		} else if (WaitingMappingRead_TX[channel_id].size() > 0) {
+		}
+
+		/* COMMAND_FIRST arbitration: give the TSU the idle bus first. A read command occupies the bus for
+		well under a microsecond and starts a tens-of-microseconds array read, so issuing it before the next
+		queued data-out keeps more dies/planes busy. Queued data-outs are served only if the TSU issued nothing. */
+		if (command_first_arbitration) {
+			broadcastChannelIdleSignal(channel_id);
+			if (channels[channel_id]->GetStatus() != BusChannelStatus::IDLE) {
+				return;
+			}
+		}
+
+		if (WaitingMappingRead_TX[channel_id].size() > 0) {
 			NVM_Transaction_Flash_RD* waitingTR = (NVM_Transaction_Flash_RD*)WaitingMappingRead_TX[channel_id].front();
 			WaitingMappingRead_TX[channel_id].pop_front();
 			transfer_read_data_from_chip(&bookKeepingTable[channel_id][waitingTR->Address.ChipID],
@@ -524,7 +536,9 @@ namespace SSD_Components {
 		}
 
 		//If the execution reaches here, then the bus channel became idle
-		broadcastChannelIdleSignal(channel_id);
+		if (!command_first_arbitration) {
+			broadcastChannelIdleSignal(channel_id);
+		}
 	}
 
 	inline void NVM_PHY_ONFI_NVDDR2::handle_ready_signal_from_chip(NVM::FlashMemory::Flash_Chip* chip, NVM::FlashMemory::Flash_Command* command)

@@ -32,6 +32,7 @@ bool Device_Parameter_Set::Preemptible_GC_Enabled = true;
 bool Device_Parameter_Set::GC_Enabled = true;
 SSD_Components::Die_Dispatch_Mode Device_Parameter_Set::Die_Dispatch_Mode = SSD_Components::Die_Dispatch_Mode::ONE_DIE;
 bool Device_Parameter_Set::Multiplane_Read_Any_Page = false;
+bool Device_Parameter_Set::Channel_Arbitration_Command_First = false;
 double Device_Parameter_Set::GC_Hard_Threshold = 0.005;//The hard gc execution threshold, used to stop preemptible gc execution
 bool Device_Parameter_Set::Dynamic_Wearleveling_Enabled = true;
 bool Device_Parameter_Set::Static_Wearleveling_Enabled = true;
@@ -331,6 +332,10 @@ void Device_Parameter_Set::XML_serialize(Utils::XmlWriter& xmlwriter)
 	val = (Multiplane_Read_Any_Page ? "true" : "false");
 	xmlwriter.Write_attribute_string(attr, val);
 
+	attr = "Channel_Arbitration";
+	val = (Channel_Arbitration_Command_First ? "COMMAND_FIRST" : "DATA_OUT_FIRST");
+	xmlwriter.Write_attribute_string(attr, val);
+
 	attr = "GC_Hard_Threshold";
 	val = std::to_string(GC_Hard_Threshold);
 	xmlwriter.Write_attribute_string(attr, val);
@@ -609,6 +614,15 @@ void Device_Parameter_Set::XML_deserialize(rapidxml::xml_node<> *node)
 					Die_Dispatch_Mode = SSD_Components::Die_Dispatch_Mode::INDEPENDENT_DIES;
 				else
 					PRINT_ERROR("Unknown Die_Dispatch_Mode specified in the SSD configuration file")
+			} else if (strcmp(param->name(), "Channel_Arbitration") == 0) {
+				std::string val = param->value();
+				std::transform(val.begin(), val.end(), val.begin(), ::toupper);
+				if (val.compare("DATA_OUT_FIRST") == 0)
+					Channel_Arbitration_Command_First = false;
+				else if (val.compare("COMMAND_FIRST") == 0)
+					Channel_Arbitration_Command_First = true;
+				else
+					PRINT_ERROR("Unknown Channel_Arbitration specified in the SSD configuration file")
 			} else if (strcmp(param->name(), "Multiplane_Read_Any_Page") == 0) {
 				std::string val = param->value();
 				std::transform(val.begin(), val.end(), val.begin(), ::toupper);

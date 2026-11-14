@@ -1074,7 +1074,9 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 | `mqsim_regress_20261115T_onedie` | ONE_DIE 回歸，2 case（通過） | 無 |
 | `mqsim_smoke_20261115T_t500_public` | T500 公開規格煙霧測試，8 case（通過） | 無 |
 | `mqsim_calibration_20261115T_t500_public` | T500 公開規格 × 派送模式，32 case（已完成；_mp 兩組受 5/6 plane 指令時間 bug 影響） | 無（可由 plan 重跑） |
-| `mqsim_calibration_20261115T_t500_vplane` | 每 plane 虛擬 LUN、channel 對照、tR／PCIe、修正版 indep_mp，40 case（已準備） | 無 |
+| `mqsim_calibration_20261115T_t500_vplane` | 每 plane 虛擬 LUN、channel 對照、tR／PCIe、修正版 indep_mp，40 case（已完成） | 無（可由 plan 重跑） |
+| `mqsim_regress_20261115T_arbitration` | 預設仲裁回歸，2 case（通過） | 無 |
+| `mqsim_calibration_20261115T_t500_cmdfirst` | COMMAND_FIRST × PCIe／channel，24 case（已完成；校準候選） | 無（可由 plan 重跑）；參數另存 `microbench/ssdconfig_t500_calibrated.xml`（git 追蹤） |
 
 目前狀態：
 - 校準目標暫定改為 T500（單一狀態、自帶 DRAM、DiskANN 資料在同一台）。GM7 的雙狀態保留為旁證；`gap_probe.sh` 尚未執行，暫緩。
@@ -1086,7 +1088,8 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 - ~~已準備、待執行：`mqsim_calibration_20261115T_t500_cap`~~ 作廢：改為保留多 chip／多 die 的真實拓撲，MQSim 新增 `Die_Dispatch_Mode`、`Multiplane_Read_Any_Page`（見「MQSim 修改」）。
 - 回歸（逐位相同）與煙霧（8/8）已通過；`mqsim_calibration_20261115T_t500_public` 已完成：indep_mp 最接近但上限 880k、中低 QD 延遲成長過快（plane 不能各自開始）。
 - 發現並修正 5／6 plane 指令時間陣列越界 bug（只影響 t500_public 的 _mp 兩組）。
-- 已準備、待執行：`mqsim_calibration_20261115T_t500_vplane`（每 plane 一個虛擬 LUN＋channel 對照＋修正版 indep_mp，40 case）。`*_dispatch` 兩批（8KB page／MLC 推測拓撲）未執行即刪除，由 T500 公開規格版取代。
+- `mqsim_calibration_20261115T_t500_vplane` 已完成：每 plane 獨立讀取修正了中低 QD；上限受 channel 仲裁造成的車隊效應限制（DATA_OUT_FIRST）。新增 `Channel_Arbitration` 參數。
+- 回歸通過；`mqsim_calibration_20261115T_t500_cmdfirst` 完成：pcie135 與 T500 各 QD 差 0–8%，存為 `microbench/ssdconfig_t500_calibrated.xml`（校準候選，尚未獨立驗證）。`*_dispatch` 兩批（8KB page／MLC 推測拓撲）未執行即刪除，由 T500 公開規格版取代。
 
 <!-- calibration-run:c761cb2dfd0128c2:begin -->
 ## 執行紀錄：mqsim_calibration_20261114T123616Z_694a754d
@@ -2016,6 +2019,50 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 | t70_pcie135 | tR 70、PCIe 1.35 | QD1 約 72µs，對齊扣掉主機開銷後的真機延遲 |
 | phys_indep_mp | 實體拓撲 2 die × 6 plane、INDEPENDENT_DIES、各 plane 可讀不同 page | indep_mp 的 bug 修正版，與虛擬 LUN 版直接比較 |
 
+## 每 plane 虛擬 LUN 結果解讀（mqsim_calibration_20261115T_t500_vplane，2026-11-15）
+
+40 case 全部完成，FTL_EXIT 計數全為 0。共同設定：4 ch × 2 chip × 12 die × 1 plane、INDEPENDENT_DIES、16KB page、TLC、ideal mapping。
+
+| QD | 1 | 4 | 16 | 32 | 64 | 128 | 256 | 512 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| T500 IOPS (k) | 13 | 50 | 192 | 357 | 608 | 862 | 1028 | 1048 |
+| reference（tR60, PCIe 1.97, 2400MT/s） | 16 | 63 | 232 | 420 | 663 | 778 | 847 | 892 |
+| fastch（同上，24000MT/s） | 16 | 64 | 240 | 437 | 728 | 1047 | 1284 | 1419 |
+| pcie135 | 16 | 62 | 231 | 418 | 669 | 800 | 858 | 895 |
+| t70_pcie135 | 14 | 54 | 200 | 362 | 589 | 722 | 778 | 813 |
+| phys_indep_mp（bug 修正後） | 16 | 58 | 187 | 320 | 503 | 682 | 800 | 857 |
+
+| 延遲成長（÷QD1） | 16 | 32 | 64 | 128 | 256 | 512 |
+|---|---:|---:|---:|---:|---:|---:|
+| T500 | 1.08 | 1.16 | 1.37 | 1.93 | 3.25 | 6.37 |
+| reference | 1.10 | 1.23 | 1.55 | 2.65 | 4.84 | 9.15 |
+| fastch | 1.08 | 1.20 | 1.43 | 1.98 | 3.23 | 5.80 |
+| t70_pcie135 | 1.11 | 1.22 | 1.50 | 2.44 | 4.53 | 8.62 |
+| phys_indep_mp | 1.37 | 1.60 | 2.05 | 3.02 | 5.13 | 9.52 |
+
+1. **各 plane 獨立讀取修正了中低 QD**：QD16 延遲成長 1.10（真機 1.08，同步 multi-plane 的 phys_indep_mp 是 1.37）。確認中段的差距來自「plane 必須等同 die 的讀取結束」。
+2. **t70_pcie135 的低 QD 絕對值對上**：QD1–64 的 IOPS 是真機的 0.97–1.08 倍。
+3. **上限卡在約 0.8–0.9M，原因是 channel，不是 PCIe**：PCIe 1.97→1.35 幾乎沒差（892k→895k）；channel 加速 10 倍（fastch）上限升到 1.42M，而且 QD128–256 的增益與延遲成長幾乎完全等於真機（增益 64.0／78.5 vs 66.3／79.1；延遲成長 1.98／3.23 vs 1.93／3.25）。回答「是不是 channel 競爭」：**在這個模型的高 QD，是**。
+4. **但 channel 並沒有忙滿**：reference QD512 時 channel 只有約 45% 時間在傳輸（每 chip data-xfer 0.223 × 2 chip），而每顆 chip「有任一 die 在執行」的時間反而從 QD64 的 0.99 掉到 QD512 的 0.74，也就是請求在排隊、die 卻閒著。每個 plane 單位一個讀取週期約 107µs（892k／96），扣掉 tR 60 與傳輸 2µs，約 45µs 在等。
+   - 推測原因（排程政策造成的車隊效應）：PHY 在匯流排空出來時，**一定先把所有等待中的資料傳完，才通知 TSU 派新指令**（DATA_OUT_FIRST）。tR 是固定值，同一批派出去的 plane 會同時讀完，接著它們的資料要一筆一筆傳（12 筆 × 1.7µs ≈ 20µs）；已經傳完、空出來的 plane 也要等整串傳完才拿得到新指令。channel 越慢，這段空等越長，所以 fastch 能消除它。
+   - 真機的控制器多半會穿插：讀取指令只佔匯流排約 0.29µs，卻能啟動 60–70µs 的 tR，先派指令可以讓更多 plane 保持忙碌。
+5. phys_indep_mp（bug 修正後）上限 857k，比修正前 880k 低，符合預期。
+
+### MQSim 修改：`Channel_Arbitration`
+
+新增 device 參數 `Channel_Arbitration`：`DATA_OUT_FIRST`（預設，原行為）或 `COMMAND_FIRST`（匯流排空出來時先讓 TSU 派指令；TSU 沒派任何指令時，才傳等待中的資料）。只改 `NVM_PHY_ONFI_NVDDR2::Execute_simulator_event` 的尾段順序；copyback 仍最優先。不會無限延後資料傳出：只有空閒且有工作的 die 能接新指令，等待傳出的 die 不是空閒的。這也是批次研究的一個變數（指令 vs 資料傳出誰優先）。
+
+### 下一批（已準備，未執行）
+
+- `mqsim_regress_20261115T_arbitration`：預設仲裁下重跑 t70_pcie135 的 QD1／QD64，輸入除新標籤外完全相同，IOPS 必須逐位等於 13702.008713／589129.565074。
+- `mqsim_calibration_20261115T_t500_cmdfirst`（24 case）：vplane 拓撲、tR 70、COMMAND_FIRST。
+
+| variant | 改動 | 用途 |
+|---|---|---|
+| reference | PCIe 1.97、2400MT/s | 換成 COMMAND_FIRST 後，車隊效應是否消失、上限是否接近 fastch |
+| pcie135 | PCIe 1.35 | 加上中央上限替身後，QD256–512 是否對上 1.03–1.05M |
+| fastch_pcie135 | 24000MT/s、PCIe 1.35 | 不受 channel 限制時的對照 |
+
 <!-- calibration-run:e9fd465f5c547af1:begin -->
 ## 執行紀錄：mqsim_calibration_20261115T_t500_vplane
 
@@ -2178,3 +2225,213 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 
 以QD32為基準；左圖為吞吐增益、右圖為平均延遲成長。這張圖避開QD1的變動，但仍保留QD64的快速量測。
 <!-- calibration-run:e9fd465f5c547af1:end -->
+
+## COMMAND_FIRST 結果：T500 校準候選完成（mqsim_calibration_20261115T_t500_cmdfirst，2026-11-15）
+
+- **回歸 `mqsim_regress_20261115T_arbitration`：通過**，預設仲裁下 13702.008713／589129.565074 IOPS 與上一批逐位相同；`Channel_Arbitration` 預設不改變任何結果。
+- cmdfirst 24 case 全部完成，FTL_EXIT 計數全為 0。
+
+| QD | 1 | 4 | 16 | 32 | 64 | 128 | 256 | 512 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| T500 IOPS (k) | 13.0 | 49.7 | 192 | 357 | 608 | 862 | 1028 | 1048 |
+| reference（PCIe 1.97） | 13.8 | 54 | 201 | 367 | 610 | 877 | 1075 | 1189 |
+| **pcie135** | 13.7 | 54 | 200 | 365 | 607 | 873 | 1054 | 1059 |
+| fastch_pcie135 | 14.0 | 55 | 205 | 373 | 622 | 894 | 1059 | 1061 |
+| pcie135 ÷ T500 | 1.05 | 1.08 | 1.04 | 1.02 | 1.00 | 1.01 | 1.03 | 1.01 |
+
+| | 4 | 16 | 32 | 64 | 128 | 256 | 512 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| T500 增益（÷QD1） | 3.8 | 14.8 | 27.5 | 46.8 | 66.3 | 79.1 | 80.7 |
+| pcie135 增益 | 3.9 | 14.6 | 26.6 | 44.3 | 63.7 | 76.9 | 77.3 |
+| T500 延遲成長 | 1.05 | 1.08 | 1.16 | 1.37 | 1.93 | 3.25 | 6.37 |
+| pcie135 延遲成長 | 1.03 | 1.10 | 1.21 | 1.46 | 2.03 | 3.33 | 6.64 |
+| T500 fio 延遲 µs | 80 | 83 | 89 | 105 | 148 | 249 | 488 |
+| pcie135 裝置延遲 µs | 74 | 79 | 87 | 105 | 146 | 240 | 478 |
+
+1. **車隊效應假設成立**：COMMAND_FIRST 後，QD512 每顆 chip「有任一 die 在執行」從 0.74 回到 0.99；上限從 813k（DATA_OUT_FIRST、同 tR）升到 1.19M（PCIe 1.97），並與「channel 快 10 倍」的對照幾乎相同（pcie135 1,059k vs fastch_pcie135 1,061k）。2400 MT/s 的 channel 在 QD512 約 53–59% 忙碌，不再限制上限。
+2. **pcie135 是目前最佳候選**：各 QD 絕對 IOPS 與 T500 差 0–8%；吞吐增益差 ≤5%；延遲成長在 QD128 以下差 ≤7%，QD512 差 4%。
+3. 剩餘差異：低 QD 的 sim IOPS 高 4–8%，因為 sim 延遲不含主機軟體（QD1：72 vs 77µs）；QD32–64 延遲成長略高（1.21／1.46 vs 1.16／1.37），表示模型中段的碰撞稍多（可能是真機 plane 數更多可用、或排程更好），目前不再調。
+4. 沒有 PCIe 替身上限時（reference）QD512 衝到 1.19M，確認需要一個中央上限；它代表的是控制器／韌體的處理上限，不是 T500 的 PCIe 真的只有 1.35 GB/s×4。
+
+### 校準候選參數（`microbench/ssdconfig_t500_calibrated.xml`，複製自 pcie135_s321_qd64）
+
+| 類別 | 參數 | 值 |
+|---|---|---|
+| 公開 | channel／die／plane | 4 ch、16 die、每 die 6 plane（以 2 chip × 12 虛擬 die × 1 plane 表示） |
+| 公開 | NAND | TLC、16KB page、2400 MT/s |
+| 公開 | mapping | `Ideal_Mapping_Table=true`（DRAM 2GB） |
+| 近似 | 獨立 plane 讀取 | 每 plane 一個虛擬 LUN＋`Die_Dispatch_Mode=INDEPENDENT_DIES`（純讀取有效；寫入不適用） |
+| 擬合 | tR | 70µs（與主機開銷互相抵換，不可單獨辨識） |
+| 擬合 | 中央上限替身 | `PCIe_Lane_Bandwidth=1.35`（約 1.06M IOPS） |
+| 選擇 | channel 仲裁 | `Channel_Arbitration=COMMAND_FIRST`（DATA_OUT_FIRST 會產生車隊效應，上限低 25%） |
+| 實驗用 | GC | 關閉（`--clean`）；working set 32GiB 全部預寫 |
+
+限制與下一步：
+- 這組參數是用同一份 T500 QD 掃描擬合出來的，**還沒有獨立驗證**。下一步應該用沒參與擬合的條件比較真機與模擬（例如不同請求大小、不同 working set，或批次送出的 fio 設定），再用於 NAND_TRANSACTION_BATCHING 研究。
+- 研究中「一次全送 vs 分批」與「指令 vs 資料傳出誰優先」都會改變結果；校準時固定為 INDEPENDENT_DIES＋COMMAND_FIRST，研究時要把它們當實驗變數，並說明哪一個是校準基準。
+
+<!-- calibration-run:a1f53965c75267fa:begin -->
+## 執行紀錄：mqsim_regress_20261115T_arbitration
+
+狀態：完整執行、原始輸出校驗通過；尚未宣稱校準完成。
+原始資料與CSV：`/home/emmanuel/projects/MQSim/microbench/results/mqsim_regress_20261115T_arbitration`。
+
+### 趨勢比較（主要目標）
+
+模擬每個seed、真機每個repeat各自以QD1正規化。真機欄位為repeat內比值的中位數及min/max，不是信賴區間。
+同repeat的不同QD在不同時間執行，因此快慢狀態可能影響正規化結果；比值不能消除這個混淆。
+
+| Variant | Seed | QD | 模擬吞吐增益 | 真機吞吐增益中位數 [min,max] | 模擬延遲成長 | 真機延遲成長中位數 [min,max] |
+|---|---:|---:|---:|---|---:|---|
+| reference | 321 | 1 | 1.000 | 1.000 [1.000, 1.000] | 1.000 | 1.000 [1.000, 1.000] |
+| reference | 321 | 64 | 42.996 | 46.810 [46.746, 46.839] | 1.500 | 1.369 [1.368, 1.371] |
+
+完整相鄰測試QD增益與log(IOPS)對log(QD)斜率見 `analysis/trend_per_run.csv`。
+兩點短測不能識別飽和轉折；即使多點也不自動把外部平台當作NAND飽和。
+
+### 絕對數值（背景與追溯，不作主要擬合目標）
+
+Status: UNCALIBRATED. No best parameter set selected.
+All measured repeats and simulation seeds retained. Ratios are descriptive, not fit acceptance.
+
+| Variant | Seed | QD | Sim IOPS | Real median [min,max] | Sim device us | Sim end-to-end us | Real fio mean us (median) |
+|---|---:|---:|---:|---|---:|---:|---:|
+| reference | 321 | 1 | 13702.0 | 12990.9 [12985.2, 13009.1] | 72.0 | 72.0 | 76.7 |
+| reference | 321 | 64 | 589129.6 | 608126.6 [608099.0, 608208.0] | 108.0 | 108.0 | 105.0 |
+
+### 本輪限制
+
+- Simulator working set approx 32.1408 GiB; real working set 32 GiB. Integer-percent interface prevents exact alignment.
+- Sim timing XML is integer microseconds (source implementation), not nanoseconds as README states. Sub-us precision is already lost.
+- Sim counts include startup/drain, with no measured-phase read warmup. Real baseline has a read warmup and a 60-second measured phase.
+- Sim preconditioning at 75% occupancy is an initialization assumption, not measured GM7 occupancy or a reproduced history.
+- Topology, technology, cache and timing values inherited from local XML are candidate assumptions; they are not verified GM7 specifications.
+- fio and simulator latency boundaries differ. Host submission/scheduling cost must not be folded into NAND read latency.
+- Transaction execution/transfer/waiting averages are not an additive decomposition of host-request latency: multiple transactions can overlap.
+- No p99 is invented; this output provides only existing aggregate mean/min/max statistics.
+- Reserved QDs were declared after seeing real data; they are comparison points, not blind independent validation.
+- Sensitivity changes are parameter experiments only. Burst behavior and hardware mechanisms are not validated.
+
+### 趨勢圖
+
+細線為各次量測，粗線為逐點中位數，陰影為min/max而非信賴區間。每個seed／repeat分別正規化；不同QD在不同時間執行，連線不代表固定SSD狀態下的因果曲線。
+
+![reference：以QD1正規化的吞吐與延遲](results/mqsim_regress_20261115T_arbitration/analysis/figures/trend_v0_qd1.png)
+
+以QD1為基準；左圖為吞吐增益、右圖為平均延遲成長。QD1本身的快慢差異會影響整條正規化曲線。
+<!-- calibration-run:a1f53965c75267fa:end -->
+
+<!-- calibration-run:0e9fa4520c1239d0:begin -->
+## 執行紀錄：mqsim_calibration_20261115T_t500_cmdfirst
+
+狀態：完整執行、原始輸出校驗通過；尚未宣稱校準完成。
+原始資料與CSV：`/home/emmanuel/projects/MQSim/microbench/results/mqsim_calibration_20261115T_t500_cmdfirst`。
+
+### 趨勢比較（主要目標）
+
+模擬每個seed、真機每個repeat各自以QD1正規化。真機欄位為repeat內比值的中位數及min/max，不是信賴區間。
+同repeat的不同QD在不同時間執行，因此快慢狀態可能影響正規化結果；比值不能消除這個混淆。
+
+| Variant | Seed | QD | 模擬吞吐增益 | 真機吞吐增益中位數 [min,max] | 模擬延遲成長 | 真機延遲成長中位數 [min,max] |
+|---|---:|---:|---:|---|---:|---|
+| reference | 321 | 1 | 1.000 | 1.000 [1.000, 1.000] | 1.000 | 1.000 [1.000, 1.000] |
+| reference | 321 | 4 | 3.926 | 3.823 [3.818, 3.824] | 1.028 | 1.047 [1.046, 1.048] |
+| reference | 321 | 16 | 14.640 | 14.794 [14.776, 14.801] | 1.097 | 1.083 [1.082, 1.084] |
+| reference | 321 | 32 | 26.658 | 27.511 [27.476, 27.521] | 1.208 | 1.164 [1.164, 1.166] |
+| reference | 321 | 64 | 44.337 | 46.810 [46.746, 46.839] | 1.444 | 1.369 [1.368, 1.371] |
+| reference | 321 | 128 | 63.728 | 66.322 [66.230, 66.691] | 2.014 | 1.934 [1.924, 1.937] |
+| reference | 321 | 256 | 78.109 | 79.088 [78.986, 79.211] | 3.264 | 3.247 [3.241, 3.251] |
+| reference | 321 | 512 | 86.412 | 80.722 [80.594, 80.739] | 5.875 | 6.364 [6.363, 6.374] |
+| pcie135 | 321 | 1 | 1.000 | 1.000 [1.000, 1.000] | 1.000 | 1.000 [1.000, 1.000] |
+| pcie135 | 321 | 4 | 3.925 | 3.823 [3.818, 3.824] | 1.028 | 1.047 [1.046, 1.048] |
+| pcie135 | 321 | 16 | 14.628 | 14.794 [14.776, 14.801] | 1.097 | 1.083 [1.082, 1.084] |
+| pcie135 | 321 | 32 | 26.627 | 27.511 [27.476, 27.521] | 1.208 | 1.164 [1.164, 1.166] |
+| pcie135 | 321 | 64 | 44.304 | 46.810 [46.746, 46.839] | 1.458 | 1.369 [1.368, 1.371] |
+| pcie135 | 321 | 128 | 63.681 | 66.322 [66.230, 66.691] | 2.028 | 1.934 [1.924, 1.937] |
+| pcie135 | 321 | 256 | 76.923 | 79.088 [78.986, 79.211] | 3.333 | 3.247 [3.241, 3.251] |
+| pcie135 | 321 | 512 | 77.315 | 80.722 [80.594, 80.739] | 6.639 | 6.364 [6.363, 6.374] |
+| fastch_pcie135 | 321 | 1 | 1.000 | 1.000 [1.000, 1.000] | 1.000 | 1.000 [1.000, 1.000] |
+| fastch_pcie135 | 321 | 4 | 3.916 | 3.823 [3.818, 3.824] | 1.014 | 1.047 [1.046, 1.048] |
+| fastch_pcie135 | 321 | 16 | 14.636 | 14.794 [14.776, 14.801] | 1.099 | 1.083 [1.082, 1.084] |
+| fastch_pcie135 | 321 | 32 | 26.677 | 27.511 [27.476, 27.521] | 1.197 | 1.164 [1.164, 1.166] |
+| fastch_pcie135 | 321 | 64 | 44.414 | 46.810 [46.746, 46.839] | 1.437 | 1.369 [1.368, 1.371] |
+| fastch_pcie135 | 321 | 128 | 63.870 | 66.322 [66.230, 66.691] | 2.000 | 1.934 [1.924, 1.937] |
+| fastch_pcie135 | 321 | 256 | 75.667 | 79.088 [78.986, 79.211] | 3.366 | 3.247 [3.241, 3.251] |
+| fastch_pcie135 | 321 | 512 | 75.775 | 80.722 [80.594, 80.739] | 6.732 | 6.364 [6.363, 6.374] |
+
+完整相鄰測試QD增益與log(IOPS)對log(QD)斜率見 `analysis/trend_per_run.csv`。
+兩點短測不能識別飽和轉折；即使多點也不自動把外部平台當作NAND飽和。
+
+### 絕對數值（背景與追溯，不作主要擬合目標）
+
+Status: UNCALIBRATED. No best parameter set selected.
+All measured repeats and simulation seeds retained. Ratios are descriptive, not fit acceptance.
+
+| Variant | Seed | QD | Sim IOPS | Real median [min,max] | Sim device us | Sim end-to-end us | Real fio mean us (median) |
+|---|---:|---:|---:|---|---:|---:|---:|
+| reference | 321 | 1 | 13759.1 | 12990.9 [12985.2, 13009.1] | 72.0 | 72.0 | 76.7 |
+| reference | 321 | 4 | 54012.2 | 49665.7 [49658.1, 49669.6] | 74.0 | 74.0 | 80.2 |
+| reference | 321 | 16 | 201436.4 | 192197.1 [192192.9, 192225.0] | 79.0 | 79.0 | 83.0 |
+| reference | 321 | 32 | 366796.8 | 357396.3 [357370.7, 357436.4] | 87.0 | 87.0 | 89.3 |
+| reference | 321 | 64 | 610043.6 | 608126.6 [608099.0, 608208.0] | 104.0 | 104.0 | 105.0 |
+| reference | 321 | 128 | 876841.7 | 861585.6 [860001.6, 867582.5] | 145.0 | 145.0 | 148.3 |
+| reference | 321 | 256 | 1074715.3 | 1027533.8 [1026965.1, 1029017.8] | 235.0 | 235.0 | 248.9 |
+| reference | 321 | 512 | 1188954.3 | 1048411.2 [1046989.6, 1050117.4] | 423.0 | 423.0 | 488.1 |
+| pcie135 | 321 | 1 | 13702.0 | 12990.9 [12985.2, 13009.1] | 72.0 | 72.0 | 76.7 |
+| pcie135 | 321 | 4 | 53783.2 | 49665.7 [49658.1, 49669.6] | 74.0 | 74.0 | 80.2 |
+| pcie135 | 321 | 16 | 200439.5 | 192197.1 [192192.9, 192225.0] | 79.0 | 79.0 | 83.0 |
+| pcie135 | 321 | 32 | 364840.0 | 357396.3 [357370.7, 357436.4] | 87.0 | 87.0 | 89.3 |
+| pcie135 | 321 | 64 | 607060.2 | 608126.6 [608099.0, 608208.0] | 105.0 | 105.0 | 105.0 |
+| pcie135 | 321 | 128 | 872557.4 | 861585.6 [860001.6, 867582.5] | 146.0 | 146.0 | 148.3 |
+| pcie135 | 321 | 256 | 1053996.6 | 1027533.8 [1026965.1, 1029017.8] | 240.0 | 240.0 | 248.9 |
+| pcie135 | 321 | 512 | 1059366.5 | 1048411.2 [1046989.6, 1050117.4] | 478.0 | 478.0 | 488.1 |
+| fastch_pcie135 | 321 | 1 | 13996.6 | 12990.9 [12985.2, 13009.1] | 71.0 | 71.0 | 76.7 |
+| fastch_pcie135 | 321 | 4 | 54807.7 | 49665.7 [49658.1, 49669.6] | 72.0 | 72.0 | 80.2 |
+| fastch_pcie135 | 321 | 16 | 204847.3 | 192197.1 [192192.9, 192225.0] | 78.0 | 78.0 | 83.0 |
+| fastch_pcie135 | 321 | 32 | 373386.5 | 357396.3 [357370.7, 357436.4] | 85.0 | 85.0 | 89.3 |
+| fastch_pcie135 | 321 | 64 | 621649.5 | 608126.6 [608099.0, 608208.0] | 102.0 | 102.0 | 105.0 |
+| fastch_pcie135 | 321 | 128 | 893964.3 | 861585.6 [860001.6, 867582.5] | 142.0 | 142.0 | 148.3 |
+| fastch_pcie135 | 321 | 256 | 1059083.1 | 1027533.8 [1026965.1, 1029017.8] | 239.0 | 239.0 | 248.9 |
+| fastch_pcie135 | 321 | 512 | 1060595.9 | 1048411.2 [1046989.6, 1050117.4] | 478.0 | 478.0 | 488.1 |
+
+### 本輪限制
+
+- Simulator working set approx 32.1408 GiB; real working set 32 GiB. Integer-percent interface prevents exact alignment.
+- Sim timing XML is integer microseconds (source implementation), not nanoseconds as README states. Sub-us precision is already lost.
+- Sim counts include startup/drain, with no measured-phase read warmup. Real baseline has a read warmup and a 60-second measured phase.
+- Sim preconditioning at 75% occupancy is an initialization assumption, not measured GM7 occupancy or a reproduced history.
+- Topology, technology, cache and timing values inherited from local XML are candidate assumptions; they are not verified GM7 specifications.
+- fio and simulator latency boundaries differ. Host submission/scheduling cost must not be folded into NAND read latency.
+- Transaction execution/transfer/waiting averages are not an additive decomposition of host-request latency: multiple transactions can overlap.
+- No p99 is invented; this output provides only existing aggregate mean/min/max statistics.
+- Reserved QDs were declared after seeing real data; they are comparison points, not blind independent validation.
+- Sensitivity changes are parameter experiments only. Burst behavior and hardware mechanisms are not validated.
+
+### 趨勢圖
+
+細線為各次量測，粗線為逐點中位數，陰影為min/max而非信賴區間。每個seed／repeat分別正規化；不同QD在不同時間執行，連線不代表固定SSD狀態下的因果曲線。
+
+![fastch_pcie135：以QD1正規化的吞吐與延遲](results/mqsim_calibration_20261115T_t500_cmdfirst/analysis/figures/trend_v0_qd1.png)
+
+以QD1為基準；左圖為吞吐增益、右圖為平均延遲成長。QD1本身的快慢差異會影響整條正規化曲線。
+
+![fastch_pcie135：以QD32正規化的吞吐與延遲](results/mqsim_calibration_20261115T_t500_cmdfirst/analysis/figures/trend_v0_qd32.png)
+
+以QD32為基準；左圖為吞吐增益、右圖為平均延遲成長。這張圖避開QD1的變動，但仍保留QD64的快速量測。
+
+![pcie135：以QD1正規化的吞吐與延遲](results/mqsim_calibration_20261115T_t500_cmdfirst/analysis/figures/trend_v1_qd1.png)
+
+以QD1為基準；左圖為吞吐增益、右圖為平均延遲成長。QD1本身的快慢差異會影響整條正規化曲線。
+
+![pcie135：以QD32正規化的吞吐與延遲](results/mqsim_calibration_20261115T_t500_cmdfirst/analysis/figures/trend_v1_qd32.png)
+
+以QD32為基準；左圖為吞吐增益、右圖為平均延遲成長。這張圖避開QD1的變動，但仍保留QD64的快速量測。
+
+![reference：以QD1正規化的吞吐與延遲](results/mqsim_calibration_20261115T_t500_cmdfirst/analysis/figures/trend_v2_qd1.png)
+
+以QD1為基準；左圖為吞吐增益、右圖為平均延遲成長。QD1本身的快慢差異會影響整條正規化曲線。
+
+![reference：以QD32正規化的吞吐與延遲](results/mqsim_calibration_20261115T_t500_cmdfirst/analysis/figures/trend_v2_qd32.png)
+
+以QD32為基準；左圖為吞吐增益、右圖為平均延遲成長。這張圖避開QD1的變動，但仍保留QD64的快速量測。
+<!-- calibration-run:0e9fa4520c1239d0:end -->

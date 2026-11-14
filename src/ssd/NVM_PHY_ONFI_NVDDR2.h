@@ -111,6 +111,8 @@ namespace SSD_Components
 		//True when a read may start on a free die while other dies of the chip are busy with reads only
 		bool Can_issue_independent_read(NVM::FlashMemory::Flash_Chip* chip);
 		void Change_memory_status_preconditioning(const NVM::NVM_Memory_Address* address, const void* status_info);
+		//Channel_Arbitration device parameter: false = DATA_OUT_FIRST (MQSim default), true = COMMAND_FIRST
+		bool command_first_arbitration = false;
 	private:
 		void transfer_read_data_from_chip(ChipBookKeepingEntry* chipBKE, DieBookKeepingEntry* dieBKE, NVM_Transaction_Flash* tr);
 		void perform_interleaved_cmd_data_transfer(NVM::FlashMemory::Flash_Chip* chip, DieBookKeepingEntry* bookKeepingEntry);

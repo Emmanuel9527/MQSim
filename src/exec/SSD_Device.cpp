@@ -104,6 +104,7 @@ SSD_Device::SSD_Device(Device_Parameter_Set *parameters, std::vector<IO_Flow_Par
 			//Step 3: create channel controller and connect channels to it
 			device->PHY = new SSD_Components::NVM_PHY_ONFI_NVDDR2(device->ID() + ".PHY", channels, parameters->Flash_Channel_Count, parameters->Chip_No_Per_Channel,
 																  parameters->Flash_Parameters.Die_No_Per_Chip, parameters->Flash_Parameters.Plane_No_Per_Die);
+			static_cast<SSD_Components::NVM_PHY_ONFI_NVDDR2 *>(device->PHY)->command_first_arbitration = parameters->Channel_Arbitration_Command_First;
 			Simulator->AddObject(device->PHY);
 			break;
 		}
