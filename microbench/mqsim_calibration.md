@@ -2452,3 +2452,9 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 - DiskANN_cpp（`vucann` 分支 21279b0）已在伺服器編譯：`/home/user/DiskANN_cpp/build/apps/search_disk_index`；trace-cmd、blktrace、filefrag 都已安裝。
 
 工具：`microbench/diskann_block_trace.sh`（伺服器執行）：預設 T16／W4／L100／K10、不快取節點；記錄 block_rq_issue／complete、DiskANN per-iteration trace、filefrag（前後各一次）、dmsetup table、分區起點、diskstats。
+
+### 第一次抓 trace 失敗（diskann_trace_20261114T201912Z_T16_W4_L100）
+
+- `search_disk_index` 讀 query 時失敗：「File size mismatch. Actual size is 1280008 while expected size is 5120008」。伺服器上 SIFT100M 的 `.fbin` 檔其實是 **uint8**：query 1,280,008＝8＋10,000×128×1；base 12,800,000,008＝8＋10⁸×128×1；disk index 40.96GB＝10⁷ sector×4KB，對應 uint8 節點 388 bytes、每 sector 10 個節點（float 會是 81.9GB）。
+- 腳本原本預設 `DATA_TYPE=float`（我的錯），而且搜尋失敗仍顯示完成。已修正：預設 uint8；執行前用檔頭（npts、dim）檢查 query 檔大小與資料型別；搜尋 log 有錯誤或沒有 `trace_stats.csv` 時以錯誤結束。
+- 該目錄只有 2 個 block 事件，無分析價值，保留作為紀錄。

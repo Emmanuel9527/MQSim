@@ -19,7 +19,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BIN:-/home/user/DiskANN_cpp/build/apps/search_disk_index}"
 PREFIX="${PREFIX:-/home/user/DiskANN/build/data/SIFT100M/disk_index_SIFT100M_base100M_R64_L100_A1.2}"
 QUERY="${QUERY:-/home/user/DiskANN/build/data/SIFT100M/bigann_query.fbin}"
-DATA_TYPE="${DATA_TYPE:-float}"
+DATA_TYPE="${DATA_TYPE:-uint8}"  # SIFT100M files on the server are uint8 despite the .fbin names
 THREADS="${THREADS:-16}"
 BEAMWIDTH="${BEAMWIDTH:-4}"
 SEARCH_L="${SEARCH_L:-100}"
@@ -33,6 +33,13 @@ for f in "$BIN" "${PREFIX}_disk.index" "${PREFIX}_pq_compressed.bin" "${PREFIX}_
     [[ -e "$f" ]] || { echo "Missing $f" >&2; exit 1; }
 done
 command -v trace-cmd >/dev/null && command -v filefrag >/dev/null
+# The .bin/.fbin header is int32 npts, int32 dim; check the element size matches DATA_TYPE before tracing.
+case "$DATA_TYPE" in uint8|int8) ELEM=1;; float) ELEM=4;; *) echo "Unknown DATA_TYPE $DATA_TYPE" >&2; exit 1;; esac
+read -r QN QD < <(python3 -c 'import struct,sys; print(*struct.unpack("<ii", open(sys.argv[1],"rb").read(8)))' "$QUERY")
+QSIZE=$(stat -c %s "$QUERY")
+if (( QSIZE != 8 + QN * QD * ELEM )); then
+    echo "Query file $QUERY: npts=$QN dim=$QD size=$QSIZE does not match DATA_TYPE=$DATA_TYPE (element $ELEM bytes)" >&2; exit 1
+fi
 mkdir -p "$OUT/layout"
 OUT="$(realpath "$OUT")"
 sudo -v
@@ -74,6 +81,8 @@ sudo trace-cmd record -C mono -b 65536 -o "$OUT/block.dat" \
     2>&1 | tee "$OUT/search.log"
 
 cat /proc/diskstats > "$OUT/diskstats_after.txt"
+SEARCH_OK=1
+if grep -qi "search failed\|error" "$OUT/search.log" || [[ ! -s "$OUT/trace_stats.csv" ]]; then SEARCH_OK=0; fi
 layout after
 sudo trace-cmd report -i "$OUT/block.dat" > "$OUT/block.txt" 2> "$OUT/report.log"
 sudo chown -R "$(id -un)" "$OUT"
@@ -85,4 +94,5 @@ fi
 echo "LOST-event lines: $(grep -ci 'lost' "$OUT/report.log" "$OUT/block.txt" | paste -sd' ')"
 echo "block events: $(wc -l < "$OUT/block.txt")"
 du -sh "$OUT"
+if (( SEARCH_OK == 0 )); then echo "ERROR: search did not complete; see $OUT/search.log" >&2; exit 1; fi
 echo "Done: $OUT"
