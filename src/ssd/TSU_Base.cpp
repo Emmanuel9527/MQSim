@@ -71,48 +71,46 @@ namespace SSD_Components
 
 	bool TSU_Base::issue_command_to_chip(Flash_Transaction_Queue *sourceQueue1, Flash_Transaction_Queue *sourceQueue2, Transaction_Type transactionType, bool suspensionRequired)
 	{
+		const bool legacy = die_dispatch_mode == Die_Dispatch_Mode::ONE_DIE;
+		NVM::FlashMemory::Flash_Chip* chip = _NVMController->Get_chip(sourceQueue1->front()->Address.ChannelID, sourceQueue1->front()->Address.ChipID);
 		flash_die_ID_type dieID = sourceQueue1->front()->Address.DieID;
 		flash_page_ID_type pageID = sourceQueue1->front()->Address.PageID;
 		unsigned int planeVector = 0;
+		bool issued = false;
 		static int issueCntr = 0;
-		
+
 		for (unsigned int i = 0; i < die_no_per_chip; i++)
 		{
 			transaction_dispatch_slots.clear();
 			planeVector = 0;
-
-			for (Flash_Transaction_Queue::iterator it = sourceQueue1->begin(); it != sourceQueue1->end();)
+			if (die_dispatch_mode == Die_Dispatch_Mode::INDEPENDENT_DIES && !_NVMController->Is_die_free(chip, dieID))
 			{
-				if (transaction_is_ready(*it) && (*it)->Address.DieID == dieID && !(planeVector & 1 << (*it)->Address.PlaneID))
-				{
-					//Check for identical pages when running multiplane command
-					if (planeVector == 0 || (*it)->Address.PageID == pageID)
-					{
-						(*it)->SuspendRequired = suspensionRequired;
-						planeVector |= 1 << (*it)->Address.PlaneID;
-						transaction_dispatch_slots.push_back(*it);
-						DEBUG(issueCntr++ << ": " << Simulator->Time() <<" Issueing Transaction - Type:" << TRTOSTR((*it)) << ", PPA:" << (*it)->PPA << ", LPA:" << (*it)->LPA << ", Channel: " << (*it)->Address.ChannelID << ", Chip: " << (*it)->Address.ChipID);
-						sourceQueue1->remove(it++);
-						continue;
-					}
-				}
-				it++;
+				dieID = (dieID + 1) % die_no_per_chip;
+				continue;
 			}
 
-			if (sourceQueue2 != NULL && transaction_dispatch_slots.size() < plane_no_per_die)
+			Flash_Transaction_Queue* queues[2] = { sourceQueue1, sourceQueue2 };
+			for (int q = 0; q < 2; q++)
 			{
-				for (Flash_Transaction_Queue::iterator it = sourceQueue2->begin(); it != sourceQueue2->end();)
+				Flash_Transaction_Queue* queue = queues[q];
+				if (queue == NULL || (q == 1 && transaction_dispatch_slots.size() >= plane_no_per_die))
+					continue;
+				for (Flash_Transaction_Queue::iterator it = queue->begin(); it != queue->end();)
 				{
 					if (transaction_is_ready(*it) && (*it)->Address.DieID == dieID && !(planeVector & 1 << (*it)->Address.PlaneID))
 					{
-						//Check for identical pages when running multiplane command
-						if (planeVector == 0 || (*it)->Address.PageID == pageID)
+						//Multi-plane command: identical page offsets unless independent multi-plane reads are enabled.
+						//The non-legacy modes compare against the first transaction chosen for this die.
+						if (!legacy && planeVector == 0)
+							pageID = (*it)->Address.PageID;
+						if (planeVector == 0 || (*it)->Address.PageID == pageID
+							|| (multiplane_read_any_page && (*it)->Type == Transaction_Type::READ))
 						{
 							(*it)->SuspendRequired = suspensionRequired;
 							planeVector |= 1 << (*it)->Address.PlaneID;
 							transaction_dispatch_slots.push_back(*it);
-							DEBUG(issueCntr++ << ": " << Simulator->Time() << " Issueing Transaction - Type:" << TRTOSTR((*it)) << ", PPA:" << (*it)->PPA << ", LPA:" << (*it)->LPA << ", Channel: " << (*it)->Address.ChannelID << ", Chip: " << (*it)->Address.ChipID);
-							sourceQueue2->remove(it++);
+							DEBUG(issueCntr++ << ": " << Simulator->Time() <<" Issueing Transaction - Type:" << TRTOSTR((*it)) << ", PPA:" << (*it)->PPA << ", LPA:" << (*it)->LPA << ", Channel: " << (*it)->Address.ChannelID << ", Chip: " << (*it)->Address.ChipID);
+							queue->remove(it++);
 							continue;
 						}
 					}
@@ -120,21 +118,18 @@ namespace SSD_Components
 				}
 			}
 
-			if (transaction_dispatch_slots.size() > 0)
+			bool sent = transaction_dispatch_slots.size() > 0;
+			if (sent)
 			{
 				_NVMController->Send_command_to_chip(transaction_dispatch_slots);
-				transaction_dispatch_slots.clear();
-				dieID = (dieID + 1) % die_no_per_chip;
-				return true;
+				issued = true;
 			}
-			else
-			{
-				transaction_dispatch_slots.clear();
-				dieID = (dieID + 1) % die_no_per_chip;
-				return false;
-			}			
+			transaction_dispatch_slots.clear();
+			dieID = (dieID + 1) % die_no_per_chip;
+			if (legacy)
+				return sent;
 		}
 
-		return false;
+		return issued;
 	}
 }

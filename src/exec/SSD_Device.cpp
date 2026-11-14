@@ -92,6 +92,8 @@ SSD_Device::SSD_Device(Device_Parameter_Set *parameters, std::vector<IO_Flow_Par
 																		parameters->Flash_Parameters.Suspend_Program_Time, parameters->Flash_Parameters.Suspend_Erase_Time);
 					Simulator->AddObject(chips[chip_cntr]); //Each simulation object (a child of MQSimEngine::Sim_Object) should be added to the engine
 				}
+				if (parameters->Flash_Parameters.Plane_No_Per_Die > ONFI_MAX_PLANES_PER_COMMAND)
+					PRINT_ERROR("Plane_No_Per_Die exceeds ONFI_MAX_PLANES_PER_COMMAND (" << ONFI_MAX_PLANES_PER_COMMAND << ")")
 				channels[channel_cntr] = new SSD_Components::ONFI_Channel_NVDDR2(channel_cntr, parameters->Chip_No_Per_Channel,
 																				 chips, parameters->Flash_Channel_Width,
 																				 SSD_Components::Channel_transfer_ns(2, 1, parameters->Channel_Transfer_Rate), SSD_Components::Channel_transfer_ns(2, 1, parameters->Channel_Transfer_Rate));
@@ -178,6 +180,11 @@ SSD_Device::SSD_Device(Device_Parameter_Set *parameters, std::vector<IO_Flow_Par
 		default:
 			throw std::invalid_argument("No implementation is available for the specified transaction scheduling algorithm");
 		}
+		if (parameters->Die_Dispatch_Mode == SSD_Components::Die_Dispatch_Mode::INDEPENDENT_DIES
+			&& parameters->Transaction_Scheduling_Policy != SSD_Components::Flash_Scheduling_Type::PRIORITY_OUT_OF_ORDER)
+			PRINT_ERROR("Die_Dispatch_Mode INDEPENDENT_DIES requires Transaction_Scheduling_Policy PRIORITY_OUT_OF_ORDER")
+		tsu->die_dispatch_mode = parameters->Die_Dispatch_Mode;
+		tsu->multiplane_read_any_page = parameters->Multiplane_Read_Any_Page;
 		Simulator->AddObject(tsu);
 		ftl->TSU = tsu;
 

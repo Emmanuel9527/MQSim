@@ -43,6 +43,8 @@ public:
 	static bool Use_Copyback_for_GC;
 	static bool Preemptible_GC_Enabled;
 	static bool GC_Enabled;//Optional; false disables garbage-collection triggering (default true)
+	static SSD_Components::Die_Dispatch_Mode Die_Dispatch_Mode;//Optional; ONE_DIE (default), ALL_DIES, INDEPENDENT_DIES
+	static bool Multiplane_Read_Any_Page;//Optional; true lets one multi-plane read combine different page offsets (default false)
 	static double GC_Hard_Threshold;//The hard gc execution threshold, used to stop preemptible gc execution
 	static bool Dynamic_Wearleveling_Enabled;
 	static bool Static_Wearleveling_Enabled;

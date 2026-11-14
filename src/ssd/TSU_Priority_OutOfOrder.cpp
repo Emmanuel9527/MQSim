@@ -401,6 +401,14 @@ bool TSU_Priority_OutOfOrder::service_read_transaction(NVM::FlashMemory::Flash_C
 
     bool suspensionRequired = false;
     ChipStatus cs = _NVMController->GetChipStatus(chip);
+    if (die_dispatch_mode == Die_Dispatch_Mode::INDEPENDENT_DIES && cs != ChipStatus::IDLE)
+    {
+        if (!_NVMController->Can_issue_independent_read(chip))
+        {
+            return false;
+        }
+        return issue_command_to_chip(sourceQueue1, sourceQueue2, Transaction_Type::READ, false);
+    }
     switch (cs)
     {
     case ChipStatus::IDLE:

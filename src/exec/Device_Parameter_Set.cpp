@@ -30,6 +30,8 @@ SSD_Components::GC_Block_Selection_Policy_Type Device_Parameter_Set::GC_Block_Se
 bool Device_Parameter_Set::Use_Copyback_for_GC = false;
 bool Device_Parameter_Set::Preemptible_GC_Enabled = true;
 bool Device_Parameter_Set::GC_Enabled = true;
+SSD_Components::Die_Dispatch_Mode Device_Parameter_Set::Die_Dispatch_Mode = SSD_Components::Die_Dispatch_Mode::ONE_DIE;
+bool Device_Parameter_Set::Multiplane_Read_Any_Page = false;
 double Device_Parameter_Set::GC_Hard_Threshold = 0.005;//The hard gc execution threshold, used to stop preemptible gc execution
 bool Device_Parameter_Set::Dynamic_Wearleveling_Enabled = true;
 bool Device_Parameter_Set::Static_Wearleveling_Enabled = true;
@@ -320,6 +322,15 @@ void Device_Parameter_Set::XML_serialize(Utils::XmlWriter& xmlwriter)
 	val = (GC_Enabled ? "true" : "false");
 	xmlwriter.Write_attribute_string(attr, val);
 
+	attr = "Die_Dispatch_Mode";
+	val = (Die_Dispatch_Mode == SSD_Components::Die_Dispatch_Mode::ONE_DIE ? "ONE_DIE"
+		: (Die_Dispatch_Mode == SSD_Components::Die_Dispatch_Mode::ALL_DIES ? "ALL_DIES" : "INDEPENDENT_DIES"));
+	xmlwriter.Write_attribute_string(attr, val);
+
+	attr = "Multiplane_Read_Any_Page";
+	val = (Multiplane_Read_Any_Page ? "true" : "false");
+	xmlwriter.Write_attribute_string(attr, val);
+
 	attr = "GC_Hard_Threshold";
 	val = std::to_string(GC_Hard_Threshold);
 	xmlwriter.Write_attribute_string(attr, val);
@@ -587,6 +598,21 @@ void Device_Parameter_Set::XML_deserialize(rapidxml::xml_node<> *node)
 				std::string val = param->value();
 				std::transform(val.begin(), val.end(), val.begin(), ::toupper);
 				GC_Enabled = (val.compare("FALSE") == 0 ? false : true);
+			} else if (strcmp(param->name(), "Die_Dispatch_Mode") == 0) {
+				std::string val = param->value();
+				std::transform(val.begin(), val.end(), val.begin(), ::toupper);
+				if (val.compare("ONE_DIE") == 0)
+					Die_Dispatch_Mode = SSD_Components::Die_Dispatch_Mode::ONE_DIE;
+				else if (val.compare("ALL_DIES") == 0)
+					Die_Dispatch_Mode = SSD_Components::Die_Dispatch_Mode::ALL_DIES;
+				else if (val.compare("INDEPENDENT_DIES") == 0)
+					Die_Dispatch_Mode = SSD_Components::Die_Dispatch_Mode::INDEPENDENT_DIES;
+				else
+					PRINT_ERROR("Unknown Die_Dispatch_Mode specified in the SSD configuration file")
+			} else if (strcmp(param->name(), "Multiplane_Read_Any_Page") == 0) {
+				std::string val = param->value();
+				std::transform(val.begin(), val.end(), val.begin(), ::toupper);
+				Multiplane_Read_Any_Page = (val.compare("FALSE") == 0 ? false : true);
 			} else if (strcmp(param->name(), "Preemptible_GC_Enabled") == 0) {
 				std::string val = param->value();
 				std::transform(val.begin(), val.end(), val.begin(), ::toupper);

@@ -18,6 +18,18 @@ enum class Flash_Scheduling_Type
 	PRIORITY_OUT_OF_ORDER,
 	FLIN
 };
+// How the TSU dispatches commands to the dies of one chip (Die_Dispatch_Mode device parameter).
+// ONE_DIE: one die per dispatch and a new dispatch only when the whole chip is idle (behavior since e338620, default).
+// ALL_DIES: one dispatch sends a command to every die that has ready work (die-interleaved, pre-e338620 behavior);
+//           the next dispatch still waits until the whole chip is idle.
+// INDEPENDENT_DIES: a free die can receive a read while other dies of the same chip are still reading
+//           (ONFI multi-LUN operation). Only implemented for PRIORITY_OUT_OF_ORDER.
+enum class Die_Dispatch_Mode
+{
+	ONE_DIE,
+	ALL_DIES,
+	INDEPENDENT_DIES
+};
 class FTL;
 class TSU_Base : public MQSimEngine::Sim_Object
 {
@@ -64,6 +76,11 @@ public:
 		*/
 	virtual void Schedule() = 0;
 	virtual void Report_results_in_XML(std::string name_prefix, Utils::XmlWriter &xmlwriter);
+
+	Die_Dispatch_Mode die_dispatch_mode = Die_Dispatch_Mode::ONE_DIE;
+	// true: a multi-plane read may combine different page offsets in different planes of one die
+	// (independent/asynchronous multi-plane read). false: identical page offset required (MQSim default).
+	bool multiplane_read_any_page = false;
 
 protected:
 	FTL *ftl;

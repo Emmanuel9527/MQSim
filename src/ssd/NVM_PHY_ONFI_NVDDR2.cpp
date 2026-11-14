@@ -126,6 +126,38 @@ namespace SSD_Components {
 		return (chipBKE->Status != ChipStatus::IDLE);
 	}
 
+	bool NVM_PHY_ONFI_NVDDR2::Is_die_free(NVM::FlashMemory::Flash_Chip* chip, flash_die_ID_type die_id)
+	{
+		return bookKeepingTable[chip->ChannelID][chip->ChipID].Die_book_keeping_records[die_id].Free;
+	}
+
+	bool NVM_PHY_ONFI_NVDDR2::Can_issue_independent_read(NVM::FlashMemory::Flash_Chip* chip)
+	{
+		ChipBookKeepingEntry* chipBKE = &bookKeepingTable[chip->ChannelID][chip->ChipID];
+		if (chipBKE->HasSuspend || chipBKE->OngoingDieCMDTransfers.size() > 0) {
+			return false;
+		}
+		switch (chipBKE->Status) {
+			case ChipStatus::IDLE:
+			case ChipStatus::READING:
+			case ChipStatus::WAIT_FOR_DATA_OUT:
+				break;
+			default:
+				return false;
+		}
+		bool any_free = false;
+		for (unsigned int die_id = 0; die_id < die_no_per_chip; die_id++) {
+			DieBookKeepingEntry* dieBKE = &chipBKE->Die_book_keeping_records[die_id];
+			if (dieBKE->Free) {
+				any_free = true;
+			} else if (dieBKE->ActiveCommand == NULL || dieBKE->Suspended
+				|| (dieBKE->ActiveCommand->CommandCode != CMD_READ_PAGE && dieBKE->ActiveCommand->CommandCode != CMD_READ_PAGE_MULTIPLANE)) {
+				return false;
+			}
+		}
+		return any_free;
+	}
+
 	void NVM_PHY_ONFI_NVDDR2::Change_flash_page_status_for_preconditioning(const NVM::FlashMemory::Physical_Page_Address& page_address, const LPA_type lpa)
 	{
 		channels[page_address.ChannelID]->Chips[page_address.ChipID]->Change_memory_status_preconditioning(&page_address, &lpa);
@@ -425,6 +457,9 @@ namespace SSD_Components {
 					} else {
 						chipBKE->Status = ChipStatus::WAIT_FOR_DATA_OUT;
 					}
+				} else if (chipBKE->Status == ChipStatus::DATA_OUT) {
+					//Other dies are still executing (die-interleaved or independent dies)
+					chipBKE->Status = ChipStatus::READING;
 				}
 				if (chipBKE->Status == ChipStatus::IDLE) {
 					if (dieBKE->Suspended) {

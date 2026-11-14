@@ -6,6 +6,8 @@
 #include "ONFI_Channel_Base.h"
 
 
+// Multi-plane command timing tables are indexed by plane count (1..ONFI_MAX_PLANES_PER_COMMAND).
+#define ONFI_MAX_PLANES_PER_COMMAND 16
 #define NVDDR2DataInTransferTime(X,Y) ((Y)->TransferRateMTs ? SSD_Components::Channel_transfer_ns((X), (Y)->ChannelWidth, (Y)->TransferRateMTs) : ((X) / (Y)->ChannelWidth / 2) * (Y)->TwoUnitDataInTime)
 #define NVDDR2DataOutTransferTime(X,Y) ((Y)->TransferRateMTs ? SSD_Components::Channel_transfer_ns((X), (Y)->ChannelWidth, (Y)->TransferRateMTs) : ((X) / (Y)->ChannelWidth / 2) * (Y)->TwoUnitDataOutTime)
 
@@ -24,14 +26,14 @@ namespace SSD_Components
 
 
 		sim_time_type TwoUnitDataOutTime; //The DDR delay for two-unit device data out
-		sim_time_type ReadCommandTime[5];//Read command transfer time for different number of planes
+		sim_time_type ReadCommandTime[ONFI_MAX_PLANES_PER_COMMAND + 1];//Read command transfer time for different number of planes
 		sim_time_type ReadDataOutSetupTime, ReadDataOutSetupTime_TwoPlane, ReadDataOutSetupTime_ThreePlane, ReadDataOutSetupTime_FourPlane;
 
 		sim_time_type TwoUnitDataInTime; //The DDR delay for two-unit device data in
-		sim_time_type ProgramCommandTime[5];//Program command transfer time for different number of planes
+		sim_time_type ProgramCommandTime[ONFI_MAX_PLANES_PER_COMMAND + 1];//Program command transfer time for different number of planes
 		sim_time_type ProgramSuspendCommandTime;
 
-		sim_time_type EraseCommandTime[5];
+		sim_time_type EraseCommandTime[ONFI_MAX_PLANES_PER_COMMAND + 1];
 		sim_time_type EraseSuspendCommandTime;
 
 		uint64_t TransferRateMTs = 0; // Device configuration sets this; zero retains constructor timing API.
