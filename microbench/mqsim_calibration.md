@@ -2435,3 +2435,20 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 
 以QD32為基準；左圖為吞吐增益、右圖為平均延遲成長。這張圖避開QD1的變動，但仍保留QD64的快速量測。
 <!-- calibration-run:0e9fa4520c1239d0:end -->
+
+## DiskANN workload 驗證：計畫與伺服器資訊（2026-11-15）
+
+目的：在真實 DiskANN 讀取模式下，比較 T500 與校準後 MQSim（`microbench/ssdconfig_t500_calibrated.xml`）的每筆請求延遲。
+
+方法與限制：
+- 第一步用**開放迴路**重播：照真機 trace 的請求送出時間（block_rq_issue）送進 MQSim，比較每筆延遲（真機 issue→complete vs MQSim 回應時間）、各時段同時處理中的請求數。吞吐在開放迴路下必然相同，不能拿來比較；模擬偏慢時誤差會被放大。
+- 之後研究派送策略要改用**閉迴路**重播：用 DiskANN 的 per-iteration trace（`trace_access.csv`／`trace_stats.csv`，含 steady_clock 時間戳記與 worker id），上一輪完成才送下一輪。
+- 沿用 DiskANN_cpp `experiments/split_async/trace_sift100m.sh` 的做法：trace-cmd 以 CLOCK_MONOTONIC 記錄 block 事件，filefrag 換算檔案 offset 與裝置 sector。
+
+伺服器（`diskann_probe_server.txt`）：
+- 單一 NVMe `nvme0n1`（T500 1.8T），根目錄 ext4 在 LVM（`ubuntu--vg-ubuntu--lv`，dm 252:0）上；scheduler `none`、`nr_requests=1023`。
+- Xeon w7-2495X 24C/48T、125GB RAM。10 秒內背景 0 讀、21 寫。
+- 已有 SIFT100M disk index：`/home/user/DiskANN/build/data/SIFT100M/disk_index_SIFT100M_base100M_R64_L100_A1.2_disk.index`（40.96GB，float，R64 L100），query `/home/user/DiskANN/build/data/SIFT100M/bigann_query.fbin`（10,000 筆）。
+- DiskANN_cpp（`vucann` 分支 21279b0）已在伺服器編譯：`/home/user/DiskANN_cpp/build/apps/search_disk_index`；trace-cmd、blktrace、filefrag 都已安裝。
+
+工具：`microbench/diskann_block_trace.sh`（伺服器執行）：預設 T16／W4／L100／K10、不快取節點；記錄 block_rq_issue／complete、DiskANN per-iteration trace、filefrag（前後各一次）、dmsetup table、分區起點、diskstats。
