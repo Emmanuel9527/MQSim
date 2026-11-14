@@ -1054,3 +1054,187 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 - **QD64/128 的 425k 上限是主機端限制，不是 SSD**：fio usr+sys ≈ 99.5%，等於單一 fio 執行緒用滿一顆核心；context switch 從約 300 萬掉到約 3 千（執行緒一直在忙，不再睡眠）。QD128 延遲剛好是 QD64 的 2 倍，是排在主機端的佇列。
 - QD32 時 CPU 已 86%，延遲 89µs 可能也帶一點主機成分。可視為裝置行為的範圍：QD1–16 確定，QD32 待多 job 對照確認。
 - 尚未觀察到 T500 本身的轉折點。`read_sweep.py`／`run_long_baseline.sh` 新增 `--jobs`／`JOBS=`（每個 total QD 平均分給多個 job，`group_reporting=1`）；`check_convergence.py` 改為逐窗加總多個 job 的 IOPS log。
+
+## 資料保存位置與目前狀態（2026-11-14）
+
+原始資料都保存在本機 `microbench/results/`（已被 `.gitignore` 排除，不在 GitHub 上）：
+
+| 目錄 | 內容 | 另一份副本 |
+|---|---|---|
+| `mqsim_long_20261112T153235Z_c53192bf` | GM7 單 job QD 掃描（雙狀態混合） | 無 |
+| `state_probe_20261114` | GM7 狀態探測（溫度／主機寫入／SMART） | 無 |
+| `mqsim_calibration_20261113T201301Z_b998d705` | MQSim 乾淨基準 24 case | 無（可由 plan 重跑） |
+| `state_probe_server_20261114` | T500 狀態探測 | 伺服器 `/home/user/MQSim/microbench/results/` |
+| `mqsim_long_20261113T233458Z_a3018661` | T500 單 job QD 掃描 | 伺服器同上 |
+| `mqsim_long_20261114T103323Z_b415d92e` | T500 4-job QD 掃描（QD4–512） | 伺服器同上 |
+| `mqsim_calibration_20261114T123616Z_694a754d` | MQSim reference vs ideal_map，20 case | 無（可由 plan 重跑） |
+| `mqsim_calibration_20261114T_t500_topo` | MQSim chip 數／時序 variants，32 case（已準備） | 無 |
+
+目前狀態：
+- 校準目標暫定改為 T500（單一狀態、自帶 DRAM、DiskANN 資料在同一台）。GM7 的雙狀態保留為旁證；`gap_probe.sh` 尚未執行，暫緩。
+- ~~待辦：T500 4-job 掃描~~ 已完成（`mqsim_long_20261114T103323Z_b415d92e`，見下節）。
+- ~~進行中：MQSim `mqsim_calibration_20261114T123616Z_694a754d`~~ 已完成：ideal mapping 讓 QD1 對上（88 vs 77µs），但上限只有 256k，瓶頸是 MQSim 每顆 chip 一次只執行一個 die（見「ideal_map 結果解讀」）。
+- 已準備、待執行：`mqsim_calibration_20261114T_t500_topo`（chip 數／時序 2×2，32 case）。
+
+<!-- calibration-run:c761cb2dfd0128c2:begin -->
+## 執行紀錄：mqsim_calibration_20261114T123616Z_694a754d
+
+狀態：完整執行、原始輸出校驗通過；尚未宣稱校準完成。
+原始資料與CSV：`/home/emmanuel/projects/MQSim/microbench/results/mqsim_calibration_20261114T123616Z_694a754d`。
+
+### 趨勢比較（主要目標）
+
+模擬每個seed、真機每個repeat各自以QD1正規化。真機欄位為repeat內比值的中位數及min/max，不是信賴區間。
+同repeat的不同QD在不同時間執行，因此快慢狀態可能影響正規化結果；比值不能消除這個混淆。
+
+| Variant | Seed | QD | 模擬吞吐增益 | 真機吞吐增益中位數 [min,max] | 模擬延遲成長 | 真機延遲成長中位數 [min,max] |
+|---|---:|---:|---:|---|---:|---|
+| reference | 321 | 1 | 1.000 | 1.000 [1.000, 1.000] | 1.000 | 1.000 [1.000, 1.000] |
+| reference | 321 | 2 | 1.958 | 1.884 [1.881, 1.884] | 1.019 | 1.063 [1.063, 1.065] |
+| reference | 321 | 4 | 3.771 | 3.823 [3.818, 3.824] | 1.062 | 1.047 [1.046, 1.048] |
+| reference | 321 | 8 | 7.009 | 7.583 [7.576, 7.586] | 1.143 | 1.056 [1.056, 1.057] |
+| reference | 321 | 16 | 12.107 | 14.794 [14.776, 14.801] | 1.323 | 1.083 [1.082, 1.084] |
+| reference | 321 | 32 | 18.152 | 27.511 [27.476, 27.521] | 1.764 | 1.164 [1.164, 1.166] |
+| reference | 321 | 64 | 22.351 | 46.810 [46.746, 46.839] | 2.863 | 1.369 [1.368, 1.371] |
+| reference | 321 | 128 | 24.212 | 66.322 [66.230, 66.691] | 5.286 | 1.934 [1.924, 1.937] |
+| reference | 321 | 256 | 25.168 | 79.088 [78.986, 79.211] | 10.149 | 3.247 [3.241, 3.251] |
+| reference | 321 | 512 | 25.890 | 80.722 [80.594, 80.739] | 19.702 | 6.364 [6.363, 6.374] |
+| ideal_map | 321 | 1 | 1.000 | 1.000 [1.000, 1.000] | 1.000 | 1.000 [1.000, 1.000] |
+| ideal_map | 321 | 2 | 1.957 | 1.884 [1.881, 1.884] | 1.023 | 1.063 [1.063, 1.065] |
+| ideal_map | 321 | 4 | 3.755 | 3.823 [3.818, 3.824] | 1.068 | 1.047 [1.046, 1.048] |
+| ideal_map | 321 | 8 | 6.942 | 7.583 [7.576, 7.586] | 1.159 | 1.056 [1.056, 1.057] |
+| ideal_map | 321 | 16 | 11.819 | 14.794 [14.776, 14.801] | 1.364 | 1.083 [1.082, 1.084] |
+| ideal_map | 321 | 32 | 17.030 | 27.511 [27.476, 27.521] | 1.898 | 1.164 [1.164, 1.166] |
+| ideal_map | 321 | 64 | 20.085 | 46.810 [46.746, 46.839] | 3.216 | 1.369 [1.368, 1.371] |
+| ideal_map | 321 | 128 | 21.513 | 66.322 [66.230, 66.691] | 5.989 | 1.934 [1.924, 1.937] |
+| ideal_map | 321 | 256 | 22.273 | 79.088 [78.986, 79.211] | 11.534 | 3.247 [3.241, 3.251] |
+| ideal_map | 321 | 512 | 22.795 | 80.722 [80.594, 80.739] | 22.455 | 6.364 [6.363, 6.374] |
+
+完整相鄰測試QD增益與log(IOPS)對log(QD)斜率見 `analysis/trend_per_run.csv`。
+兩點短測不能識別飽和轉折；即使多點也不自動把外部平台當作NAND飽和。
+
+### 絕對數值（背景與追溯，不作主要擬合目標）
+
+Status: UNCALIBRATED. No best parameter set selected.
+All measured repeats and simulation seeds retained. Ratios are descriptive, not fit acceptance.
+
+| Variant | Seed | QD | Sim IOPS | Real median [min,max] | Sim device us | Sim end-to-end us | Real fio mean us (median) |
+|---|---:|---:|---:|---|---:|---:|---:|
+| reference | 321 | 1 | 6194.1 | 12990.9 [12985.2, 13009.1] | 161.0 | 161.0 | 76.7 |
+| reference | 321 | 2 | 12127.9 | 24470.0 [24465.8, 24474.4] | 164.0 | 164.0 | 81.5 |
+| reference | 321 | 4 | 23361.1 | 49665.7 [49658.1, 49669.6] | 171.0 | 171.0 | 80.2 |
+| reference | 321 | 8 | 43414.0 | 98515.5 [98509.9, 98557.5] | 184.0 | 184.0 | 81.0 |
+| reference | 321 | 16 | 74992.9 | 192197.1 [192192.9, 192225.0] | 213.0 | 213.0 | 83.0 |
+| reference | 321 | 32 | 112438.0 | 357396.3 [357370.7, 357436.4] | 284.0 | 284.0 | 89.3 |
+| reference | 321 | 64 | 138442.4 | 608126.6 [608099.0, 608208.0] | 461.0 | 461.0 | 105.0 |
+| reference | 321 | 128 | 149973.8 | 861585.6 [860001.6, 867582.5] | 851.0 | 851.0 | 148.3 |
+| reference | 321 | 256 | 155895.4 | 1027533.8 [1026965.1, 1029017.8] | 1634.0 | 1634.0 | 248.9 |
+| reference | 321 | 512 | 160363.6 | 1048411.2 [1046989.6, 1050117.4] | 3172.0 | 3172.0 | 488.1 |
+| ideal_map | 321 | 1 | 11246.2 | 12990.9 [12985.2, 13009.1] | 88.0 | 88.0 | 76.7 |
+| ideal_map | 321 | 2 | 22007.5 | 24470.0 [24465.8, 24474.4] | 90.0 | 90.0 | 81.5 |
+| ideal_map | 321 | 4 | 42230.7 | 49665.7 [49658.1, 49669.6] | 94.0 | 94.0 | 80.2 |
+| ideal_map | 321 | 8 | 78070.8 | 98515.5 [98509.9, 98557.5] | 102.0 | 102.0 | 81.0 |
+| ideal_map | 321 | 16 | 132919.1 | 192197.1 [192192.9, 192225.0] | 120.0 | 120.0 | 83.0 |
+| ideal_map | 321 | 32 | 191527.9 | 357396.3 [357370.7, 357436.4] | 167.0 | 167.0 | 89.3 |
+| ideal_map | 321 | 64 | 225879.1 | 608126.6 [608099.0, 608208.0] | 283.0 | 283.0 | 105.0 |
+| ideal_map | 321 | 128 | 241934.9 | 861585.6 [860001.6, 867582.5] | 527.0 | 527.0 | 148.3 |
+| ideal_map | 321 | 256 | 250487.5 | 1027533.8 [1026965.1, 1029017.8] | 1015.0 | 1015.0 | 248.9 |
+| ideal_map | 321 | 512 | 256353.4 | 1048411.2 [1046989.6, 1050117.4] | 1976.0 | 1976.0 | 488.1 |
+
+### 本輪限制
+
+- Simulator working set approx 33.3312 GiB; real working set 32 GiB. Integer-percent interface prevents exact alignment.
+- Sim timing XML is integer microseconds (source implementation), not nanoseconds as README states. Sub-us precision is already lost.
+- Sim counts include startup/drain, with no measured-phase read warmup. Real baseline has a read warmup and a 60-second measured phase.
+- Sim preconditioning at 75% occupancy is an initialization assumption, not measured GM7 occupancy or a reproduced history.
+- Topology, technology, cache and timing values inherited from local XML are candidate assumptions; they are not verified GM7 specifications.
+- fio and simulator latency boundaries differ. Host submission/scheduling cost must not be folded into NAND read latency.
+- Transaction execution/transfer/waiting averages are not an additive decomposition of host-request latency: multiple transactions can overlap.
+- No p99 is invented; this output provides only existing aggregate mean/min/max statistics.
+- Reserved QDs were declared after seeing real data; they are comparison points, not blind independent validation.
+- Sensitivity changes are parameter experiments only. Burst behavior and hardware mechanisms are not validated.
+
+### 趨勢圖
+
+細線為各次量測，粗線為逐點中位數，陰影為min/max而非信賴區間。每個seed／repeat分別正規化；不同QD在不同時間執行，連線不代表固定SSD狀態下的因果曲線。
+
+![ideal_map：以QD1正規化的吞吐與延遲](results/mqsim_calibration_20261114T123616Z_694a754d/analysis/figures/trend_v0_qd1.png)
+
+以QD1為基準；左圖為吞吐增益、右圖為平均延遲成長。QD1本身的快慢差異會影響整條正規化曲線。
+
+![ideal_map：以QD32正規化的吞吐與延遲](results/mqsim_calibration_20261114T123616Z_694a754d/analysis/figures/trend_v0_qd32.png)
+
+以QD32為基準；左圖為吞吐增益、右圖為平均延遲成長。這張圖避開QD1的變動，但仍保留QD64的快速量測。
+
+![reference：以QD1正規化的吞吐與延遲](results/mqsim_calibration_20261114T123616Z_694a754d/analysis/figures/trend_v1_qd1.png)
+
+以QD1為基準；左圖為吞吐增益、右圖為平均延遲成長。QD1本身的快慢差異會影響整條正規化曲線。
+
+![reference：以QD32正規化的吞吐與延遲](results/mqsim_calibration_20261114T123616Z_694a754d/analysis/figures/trend_v1_qd32.png)
+
+以QD32為基準；左圖為吞吐增益、右圖為平均延遲成長。這張圖避開QD1的變動，但仍保留QD64的快速量測。
+<!-- calibration-run:c761cb2dfd0128c2:end -->
+
+## T500 4-job QD 掃描（mqsim_long_20261114T103323Z_b415d92e）
+
+設定同單 job 掃描，但每個 total QD 平均分給 4 個 libaio job（`JOBS=4`，`group_reporting=1`），QD 4–512，每點 60s＋10s ramp，3 次重複。
+
+| total QD | IOPS 中位數 | 對前一點增益 | 平均延遲 µs | p99 µs | fio usr+sys %（每 job 平均） | 單 job 同 QD IOPS |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 49,666 | – | 80.2 | 119 | 5.8 | 49,119 |
+| 8 | 98,515 | 1.98 | 81.0 | 124 | 8.5 | 96,210 |
+| 16 | 192,197 | 1.95 | 83.0 | 131 | 17.3 | 188,083 |
+| 32 | 357,396 | 1.86 | 89.3 | 159 | 33.5 | 358,228 |
+| 64 | 608,127 | 1.70 | 105.0 | 232 | 54.0 | 425,757（主機受限） |
+| 128 | 861,586 | 1.42 | 148.3 | 741 | 67.5 | 424,370（主機受限） |
+| 256 | 1,027,534 | 1.19 | 248.9 | 1,044 | 79.3 | – |
+| 512 | 1,048,411 | 1.02 | 488.1 | 1,434 | 81.8 | – |
+
+- 所有 run 前後半 IOPS 比 0.995–1.003，3 次重複 max/min ≤1.009，穩定單一狀態。
+- QD≤32 時 1 job 與 4 job 幾乎相同（差 <2.5%），單 job 資料在這個範圍可信；QD64/128 的單 job 值確認是主機上限。
+- **T500 轉折**：增益從 QD32 起明顯下降（1.86→1.70→1.42→1.19→1.02），QD256 達約 98% 上限，上限約 **1.05M IOPS**。QD256→512 延遲正好加倍（249→488µs），是飽和後的純排隊。
+- 上限是否完全屬於 SSD：每 job CPU 在 QD512 約 82%（判斷依據：同 QD 下 4 job 與 1 job 的 CPU 比例只有在「每 job 平均」語意下才合理），未滿載；context switch 隨 QD 下降但未到單 job 飽和時的千位數。傾向是裝置上限，但 8-job 對照才能完全排除主機成分。官方規格 2TB 隨機讀約 1.18M IOPS（不同測試條件），量級吻合。
+- 粗估有效平行度（推論，非 BOM）：上限 × 低負載延遲 ≈ 1.05M × 80µs ≈ 84 個同時服務中的讀取。低負載延遲含主機與控制器開銷，NAND 本身的 tR 更短，所以實際平行單元可能更少。
+- 與 MQSim 乾淨基準（2MiB CMT、64 die／128 plane）相比：sim QD1 161µs（其中約一半是 mapping 讀取），QD128 才 150k。T500 有自帶 DRAM，整張 L2P 常駐 DRAM，不該有 mapping 讀取。所以第一步改用 `Ideal_Mapping_Table=true`（所有 mapping 都在 DRAM），再調 NAND 時序與拓撲。之前在 GM7（DRAM-less）情境下暫緩 ideal mapping 的理由，對 T500 不適用。
+
+工具變更：`mqsim_calibrate.py prepare` 支援多個 `--reference`（後者覆蓋重疊的 repeat/QD；此次 QD1–2 來自單 job、QD4–512 來自 4-job，不同 archive 的同號 repeat 不是同一次執行），以及 `--variant NAME KEY=VALUE…`、`--base-override KEY=VALUE…`。
+
+## ideal_map 結果解讀（mqsim_calibration_20261114T123616Z_694a754d）
+
+20 case 全部完成，`FTL_EXIT read_entries_created_online=0 released_from_lpa_barrier=0 gc_executions=0`（20/20）。
+
+| QD | reference IOPS | ideal_map IOPS | ideal_map 裝置延遲 µs | T500 IOPS | T500 fio 延遲 µs |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 6.2k | 11.2k | 88 | 13.0k | 77 |
+| 16 | 75k | 133k | 120 | 192k | 83 |
+| 64 | 138k | 226k | 283 | 608k | 105 |
+| 128 | 150k | 242k | 527 | 862k | 148 |
+| 512 | 160k | 256k | 1976 | 1.05M | 488 |
+
+- ideal mapping 符合預期：QD1 從 161µs 降到 88µs = tR 75 + 4KB 通道傳輸 12（333 MT/s）+ 1；mapping 讀取消失（waiting 0）。
+- 上限只有 256k，是 T500 的約 1/4；轉折太早（自身上限的 52% 在 QD16、75% 在 QD32，T500 在 QD32 只有 34%）。所以 QD 增益在 QD≥16 就明顯低於真機。
+- **瓶頸機制（讀原始碼＋chip 統計確認）**：`TSU_Base::issue_command_to_chip` 每次只對一個 die 送指令就 return，且 `service_read_transaction` 要求 chip 為 IDLE 才發新讀取。所以同一 chip 的兩個 die 不會重疊執行，multi-plane 也只在同 PageID 時成立（隨機讀幾乎不會）。實際平行單位是 **32 顆 chip**，不是 64 die／128 plane。
+  - QD512 每顆 chip：execution 時間佔 0.59、data transfer 0.10；256k/32 = 8k 讀取/s/chip，即每次讀取約 125µs（75 tR + 12 傳輸 + 其餘等通道／排程）。
+  - PCIe 不是瓶頸：4KB 含 TLP overhead 約 1.25µs，上限約 80 萬。
+- 推論：在這個 MQSim 版本裡，「顆 chip 數」就是 tR 層級的平行度旋鈕；die/plane 數對隨機 4K 讀幾乎無效。這點也直接影響 NAND_TRANSACTION_BATCHING 研究：chip 是一次只接一批（同 die）的指令。
+
+### 下一批（已準備，未執行）：`mqsim_calibration_20261114T_t500_topo`
+
+全部 variant 都套 `Ideal_Mapping_Table=true`（`--base-override`），總 plane 數不變（容量與 working set 同前一批），QD 1/4/16/32/64/128/256/512，seed 321，`--clean`，32 case：
+
+| variant | 改動 | 用途 |
+|---|---|---|
+| reference | 無（＝ideal_map，同批對照） | 確認同一 binary 結果可重現 |
+| chip64 | 8 ch × 8 chip × 1 die | 只加平行單位：上限是否約翻倍、轉折是否後移 |
+| fast_io | tR 50µs、通道 1200 MT/s（4KB 約 3.4µs） | 只改時序：QD1 延遲與每單位速率 |
+| chip64_fast | 兩者同時 | 預估 QD1 約 55µs、上限接近 1M |
+
+這些數值是校準候選值，不是 T500 的實際規格（T500 的 NAND die 數、plane 數、tR 都未查證）。
+
+<!-- calibration-run:e91d063ed2284d21:begin -->
+## 執行紀錄：mqsim_calibration_20261114T_t500_topo
+
+狀態：已準備 32 個cases，尚未執行。
+輸入與來源：`/home/emmanuel/projects/MQSim/microbench/results/mqsim_calibration_20261114T_t500_topo`。
+目標：QD吞吐增益、延遲成長及曲線轉折；絕對數值僅供追溯。
+<!-- calibration-run:e91d063ed2284d21:end -->

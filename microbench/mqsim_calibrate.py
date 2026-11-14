@@ -73,19 +73,25 @@ def workload(config,qd,seed,count,working_percent,clean=False):
     return ET.ElementTree(root)
 
 
-def export_reference(path,out):
-    verify_archive(path)
-    meta=json.loads((path/'metadata.json').read_text())
-    a=meta['arguments']
-    if a.get('block_kib')!=4 or a.get('size_gib')!=32:raise ValueError('Reference must be 4KiB/32GiB read_sweep archive')
-    rows=[]
-    for case in meta['schedule']:
-        label=f'r{case["repeat"]}_qd{case["qd"]}'
-        row=summarize(json.loads((path/label/'fio.json').read_text()),label,case['qd'],case['repeat'])
-        row['source']=str(path/label/'fio.json');row['source_sha256']=sha(path/label/'fio.json');rows.append(row)
+def export_reference(paths,out):
+    """Merge read_sweep archives; for a (repeat, QD) present in several, the LATER path wins."""
+    merged={};sources=[]
+    for path in paths:
+        verify_archive(path)
+        meta=json.loads((path/'metadata.json').read_text())
+        a=meta['arguments']
+        if a.get('block_kib')!=4 or a.get('size_gib')!=32:raise ValueError('Reference must be 4KiB/32GiB read_sweep archive')
+        for case in meta['schedule']:
+            label=f'r{case["repeat"]}_qd{case["qd"]}'
+            row=summarize(json.loads((path/label/'fio.json').read_text()),label,case['qd'],case['repeat'])
+            row['fio_jobs']=a.get('jobs',1)
+            row['source']=str(path/label/'fio.json');row['source_sha256']=sha(path/label/'fio.json')
+            merged[(case['repeat'],case['qd'])]=row
+        sources.append({'path':str(path),'manifest_sha256':sha(path/'archive_manifest.json'),'fio_jobs':a.get('jobs',1)})
+    rows=[merged[k] for k in sorted(merged)]
     write_csv(out/'real_per_run.csv',rows)
-    return {'path':str(path),'manifest_sha256':sha(path/'archive_manifest.json'),
-            'note':'All repeats retained; 60-second measured windows after read warmup. No fast/slow sample deletion.'}
+    return {'sources':sources,
+            'note':'All repeats retained; 60-second measured windows after read warmup. When archives overlap, the later --reference wins per (repeat, QD); repeats from different archives are different runs.'}
 
 
 def record_calibration(root, lines):
@@ -157,7 +163,7 @@ def prepare(a):
     out.mkdir(parents=True,exist_ok=False)
     shutil.copyfile(ROOT/'ssdconfig.xml',out/'input_ssdconfig.xml')
     shutil.copyfile(Path(__file__),out/'mqsim_calibrate.py.snapshot')
-    ref=export_reference(a.reference.resolve(),out)
+    ref=export_reference([p.resolve() for p in a.reference],out)
     variants={'reference':{}}
     if a.sensitivity:
         for name,factor in [('tr_minus20',.8),('tr_plus20',1.2)]:
@@ -173,6 +179,14 @@ def prepare(a):
             variants[name]={'Channel_Transfer_Rate':candidate}
         for name,factor in [('cmt_half',.5),('cmt_double',2)]:
             variants[name]={'CMT_Capacity':round(int(base.findtext('.//CMT_Capacity'))*factor)}
+    for spec in a.variant:
+        name,pairs=spec[0],spec[1:]
+        if name in variants or not pairs or any('=' not in x for x in pairs):raise ValueError(f'Bad --variant {spec}')
+        variants[name]={k:v for k,v in (x.split('=',1) for x in pairs)}
+    if any('=' not in x for x in a.base_override):raise ValueError('--base-override needs KEY=VALUE')
+    base_override={k:v for k,v in (x.split('=',1) for x in a.base_override)}
+    for k in [*base_override,*(k for c in variants.values() for k in c)]:
+        if base.find('.//'+k) is None:raise ValueError(f'Unknown ssdconfig tag {k}')
     cases=[]
     for variant,changes in variants.items():
         for seed in a.seeds:
@@ -181,17 +195,17 @@ def prepare(a):
                 config=copy.deepcopy(base)
                 setval(config,'Enabled_Preconditioning','true')
                 setval(config,'Seed',seed)
-                for k,v in changes.items():setval(config,k,v)
+                for k,v in {**base_override,**changes}.items():setval(config,k,v)
                 if a.clean:ET.SubElement(config.find('.//Device_Parameter_Set'),'GC_Enabled').text='false'
                 geo=geometry(config)
                 config.write(run/'ssdconfig.xml',encoding='us-ascii',xml_declaration=True)
                 workload(config,qd,seed,a.requests,geo['working_set_percentage'],a.clean).write(run/'workload.xml',encoding='us-ascii',xml_declaration=True)
                 cases.append(dict(label=label,variant=variant,seed=seed,qd=qd,requests=a.requests,
                                   intended_role='fit_candidate' if qd in [1,4,16,64] else 'reserved_comparison',
-                                  overrides=changes,**geo))
+                                  overrides={**base_override,**changes},**geo))
     manifest=dict(kind='mqsim-diagnostic-v1',cases=cases,source_hashes=source_hashes(),reference=ref,
-                  status='prepared_not_executed',model_claim='Uncalibrated candidate, not GM7 hardware reconstruction',
-                  common_overrides={'Enabled_Preconditioning':True,'Initial_Occupancy_Percentage':75,'clean':bool(a.clean)},
+                  status='prepared_not_executed',model_claim='Uncalibrated candidate, not a hardware reconstruction of the reference SSD',
+                  common_overrides={'Enabled_Preconditioning':True,'Initial_Occupancy_Percentage':75,'clean':bool(a.clean),**base_override},
                   sensitivity_note='One-parameter-group perturbations are diagnostic choices, NOT measured hardware ranges or calibrated estimates.',
                   files={str(p.relative_to(out)):sha(p) for p in out.rglob('*') if p.is_file()})
     (out/'plan.json').write_text(json.dumps(manifest,indent=2))
@@ -330,7 +344,9 @@ def analyze(root):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);sub=p.add_subparsers(dest='mode',required=True)
-    prep=sub.add_parser('prepare');prep.add_argument('--out',type=Path);prep.add_argument('--reference',type=Path,default=DEFAULT_REFERENCE)
+    prep=sub.add_parser('prepare');prep.add_argument('--out',type=Path);prep.add_argument('--reference',type=Path,nargs='+',default=[DEFAULT_REFERENCE],help='read_sweep archives; later ones override overlapping (repeat, QD)')
+    prep.add_argument('--variant',nargs='+',action='append',default=[],metavar='NAME KEY=VALUE',help='extra variant: name then XML tag=value pairs (repeatable)')
+    prep.add_argument('--base-override',nargs='+',default=[],metavar='KEY=VALUE',help='XML tag=value applied to every variant, including reference')
     prep.add_argument('--qds',type=int,nargs='+',default=[1,2,4,8,16,32,64,128]);prep.add_argument('--seeds',type=int,nargs='+',default=[321,322,323])
     prep.add_argument('--requests',type=int,default=100000);prep.add_argument('--sensitivity',action='store_true')
     prep.add_argument('--clean',action='store_true',help='GC_Enabled=false, exact 32GiB working set, full working-set preconditioning')
