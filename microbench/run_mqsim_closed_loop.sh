@@ -44,6 +44,7 @@ ET.ElementTree(root).write(out, encoding='us-ascii', xml_declaration=True)
 EOF
 echo "Closed-loop replay ($( [[ "$ROUNDS" != 0 ]] && echo "first $ROUNDS rounds per worker" || echo "all rounds")) with $CONFIG"
 if ( cd "$RUN" && MQSIM_REQUEST_LOG="$RUN/mqsim_requests.txt" MQSIM_ROUND_LOG="$RUN/mqsim_rounds.txt" \
+    MQSIM_TRANSACTION_LOG="$RUN/mqsim_transactions.txt" \
     /usr/bin/time -v "$RUN/MQSim.binary" -i ssdconfig.xml -w workload.xml < /dev/null > stdout.txt 2> stderr.txt ); then
     :
 else
@@ -55,3 +56,4 @@ else
 fi
 grep -h "FTL_EXIT\|HOST_EXIT\|Closed-loop replay" "$RUN/stderr.txt" "$RUN/stdout.txt" || true
 python3 "$ROOT_DIR/microbench/compare_closed_loop.py" "$TRACE" "$RUN"
+python3 "$ROOT_DIR/microbench/analyze_ssd_slack.py" "$RUN" > /dev/null && echo "SSD slack: $RUN/slack.json"

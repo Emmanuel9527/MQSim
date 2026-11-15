@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include "../sim/Engine.h"
 #include "NVM_PHY_ONFI_NVDDR2.h"
@@ -158,6 +160,32 @@ namespace SSD_Components {
 		return any_free;
 	}
 
+	//MQSIM_TRANSACTION_LOG=<path>: one line per completed flash read (after its data-out), for SSD-internal slack analysis.
+	void NVM_PHY_ONFI_NVDDR2::log_transaction(NVM_Transaction_Flash* tr)
+	{
+		static FILE* log = NULL;
+		static bool checked = false;
+		if (!checked) {
+			checked = true;
+			const char* path = std::getenv("MQSIM_TRANSACTION_LOG");
+			if (path != NULL && path[0] != '\0') {
+				log = std::fopen(path, "w");
+				if (log == NULL) {
+					PRINT_ERROR("Cannot open MQSIM_TRANSACTION_LOG " << path)
+				}
+				std::fprintf(log, "issue_ns cmd_start_ns exec_start_ns exec_end_ns xfer_start_ns xfer_end_ns channel chip die plane block page source\n");
+			}
+		}
+		if (log == NULL) {
+			return;
+		}
+		std::fprintf(log, "%llu %llu %llu %llu %llu %llu %u %u %u %u %u %u %d\n",
+			(unsigned long long)tr->Issue_time, (unsigned long long)tr->STAT_t_cmd_start, (unsigned long long)tr->STAT_t_exec_start,
+			(unsigned long long)tr->STAT_t_exec_end, (unsigned long long)tr->STAT_t_xfer_start, (unsigned long long)tr->STAT_t_xfer_end,
+			(unsigned int)tr->Address.ChannelID, (unsigned int)tr->Address.ChipID, (unsigned int)tr->Address.DieID,
+			(unsigned int)tr->Address.PlaneID, (unsigned int)tr->Address.BlockID, (unsigned int)tr->Address.PageID, (int)tr->Source);
+	}
+
 	void NVM_PHY_ONFI_NVDDR2::Change_flash_page_status_for_preconditioning(const NVM::FlashMemory::Physical_Page_Address& page_address, const LPA_type lpa)
 	{
 		channels[page_address.ChannelID]->Chips[page_address.ChipID]->Change_memory_status_preconditioning(&page_address, &lpa);
@@ -235,6 +263,9 @@ namespace SSD_Components {
 					chipBKE->Last_transfer_finish_time = Simulator->Time() + suspendTime + target_channel->ReadCommandTime[transaction_list.size()];
 					Simulator->Register_sim_event(Simulator->Time() + suspendTime + target_channel->ReadCommandTime[transaction_list.size()], this,
 						dieBKE, (int)NVDDR2_SimEventType::READ_CMD_ADDR_TRANSFERRED);
+					for (auto tr : transaction_list) {
+						tr->STAT_t_cmd_start = Simulator->Time() + suspendTime;
+					}
 				} else {
 					dieBKE->DieInterleavedTime = suspendTime + target_channel->ReadCommandTime[transaction_list.size()];
 					chipBKE->Last_transfer_finish_time += suspendTime + target_channel->ReadCommandTime[transaction_list.size()];
@@ -384,6 +415,7 @@ namespace SSD_Components {
 				targetChip->EndCMDXfer(dieBKE->ActiveCommand);
 				for (auto tr : dieBKE->ActiveTransactions) {
 					tr->STAT_execution_time = dieBKE->Expected_finish_time - Simulator->Time();
+					tr->STAT_t_exec_start = Simulator->Time();
 				}
 				chipBKE->OngoingDieCMDTransfers.pop();
 				chipBKE->No_of_active_dies++;
@@ -433,6 +465,8 @@ namespace SSD_Components {
 				//DEBUG2("Chip " << targetChip->ChannelID << ", " << targetChip->ChipID << ", " << dieBKE->ActiveTransactions.front()->Address.DieID << ": READ_DATA_TRANSFERRED ")
 				targetChip->EndDataOutXfer(dieBKE->ActiveCommand);
 				copy_read_data_to_transaction((NVM_Transaction_Flash_RD*)dieBKE->ActiveTransfer, dieBKE->ActiveCommand);
+				dieBKE->ActiveTransfer->STAT_t_xfer_end = Simulator->Time();
+				log_transaction(dieBKE->ActiveTransfer);
 	#if 0
 				if (tr->ExecutionMode != ExecutionModeType::COPYBACK)
 	#endif
@@ -551,6 +585,9 @@ namespace SSD_Components {
 		case CMD_READ_PAGE:
 		case CMD_READ_PAGE_MULTIPLANE:
 			DEBUG("Chip " << chip->ChannelID << ", " << chip->ChipID << ": finished  read command")
+			for (auto tr : dieBKE->ActiveTransactions) {
+				tr->STAT_t_exec_end = Simulator->Time();
+			}
 			chipBKE->No_of_active_dies--;
 			if (chipBKE->No_of_active_dies == 0)//After finishing the last command, the chip state is changed
 				chipBKE->Status = ChipStatus::WAIT_FOR_DATA_OUT;
@@ -678,6 +715,7 @@ namespace SSD_Components {
 	{
 		//DEBUG2("Chip " << tr->Address.ChannelID << ", " << tr->Address.ChipID << ": transfer read data started for LPA: " << tr->LPA)
 		dieBKE->ActiveTransfer = tr;
+		tr->STAT_t_xfer_start = Simulator->Time();
 		channels[tr->Address.ChannelID]->Chips[tr->Address.ChipID]->StartDataOutXfer();
 		chipBKE->Status = ChipStatus::DATA_OUT;
 		Simulator->Register_sim_event(Simulator->Time() + NVDDR2DataOutTransferTime(tr->Data_and_metadata_size_in_byte, channels[tr->Address.ChannelID]),
@@ -700,6 +738,9 @@ namespace SSD_Components {
 				bookKeepingTable[chip->ChannelID][chip->ChipID].Status = ChipStatus::CMD_IN;
 				Simulator->Register_sim_event(Simulator->Time() + bookKeepingEntry->DieInterleavedTime,
 					this, bookKeepingEntry, (int)NVDDR2_SimEventType::READ_CMD_ADDR_TRANSFERRED);
+				for (auto tr : bookKeepingEntry->ActiveTransactions) {
+					tr->STAT_t_cmd_start = Simulator->Time();
+				}
 				break;
 			case Transaction_Type::WRITE:
 				if (((NVM_Transaction_Flash_WR*)bookKeepingEntry->ActiveTransactions.front())->RelatedRead == NULL) {

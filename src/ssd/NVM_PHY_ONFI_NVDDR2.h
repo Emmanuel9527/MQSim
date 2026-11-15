@@ -114,6 +114,7 @@ namespace SSD_Components
 		//Channel_Arbitration device parameter: false = DATA_OUT_FIRST (MQSim default), true = COMMAND_FIRST
 		bool command_first_arbitration = false;
 	private:
+		void log_transaction(NVM_Transaction_Flash* tr);
 		void transfer_read_data_from_chip(ChipBookKeepingEntry* chipBKE, DieBookKeepingEntry* dieBKE, NVM_Transaction_Flash* tr);
 		void perform_interleaved_cmd_data_transfer(NVM::FlashMemory::Flash_Chip* chip, DieBookKeepingEntry* bookKeepingEntry);
 		void send_resume_command_to_chip(NVM::FlashMemory::Flash_Chip* chip, ChipBookKeepingEntry* chipBKE);

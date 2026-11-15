@@ -34,6 +34,9 @@ namespace SSD_Components
 		bool Physical_address_determined;
 		sim_time_type Estimated_alone_waiting_time;//Used in scheduling methods, such as FLIN, where fairness and QoS is considered in scheduling
 		bool FLIN_Barrier;//Especially used in queue reordering in FLIN scheduler
+		//Per-transaction timeline for MQSIM_TRANSACTION_LOG (reads): command transfer start, array read start/end,
+		//data-out start/end. Zero means not reached. Issue_time (NVM_Transaction) is when the TSU received it.
+		sim_time_type STAT_t_cmd_start = 0, STAT_t_exec_start = 0, STAT_t_exec_end = 0, STAT_t_xfer_start = 0, STAT_t_xfer_end = 0;
 	private:
 
 	};
