@@ -2458,3 +2458,151 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 - `search_disk_index` 讀 query 時失敗：「File size mismatch. Actual size is 1280008 while expected size is 5120008」。伺服器上 SIFT100M 的 `.fbin` 檔其實是 **uint8**：query 1,280,008＝8＋10,000×128×1；base 12,800,000,008＝8＋10⁸×128×1；disk index 40.96GB＝10⁷ sector×4KB，對應 uint8 節點 388 bytes、每 sector 10 個節點（float 會是 81.9GB）。
 - 腳本原本預設 `DATA_TYPE=float`（我的錯），而且搜尋失敗仍顯示完成。已修正：預設 uint8；執行前用檔頭（npts、dim）檢查 query 檔大小與資料型別；搜尋 log 有錯誤或沒有 `trace_stats.csv` 時以錯誤結束。
 - 該目錄只有 2 個 block 事件，無分析價值，保留作為紀錄。
+
+### 真機 DiskANN trace（diskann_trace_20261114T202209Z_T16_W4_L100）
+
+- 設定：SIFT100M uint8 disk index（R64 L100，40.96GB），10,000 query，T16、W4、L100、K10、不快取節點；trace-cmd 無遺失事件，index extents 前後一致。
+- DiskANN 回報：QPS 3,438.65，平均延遲 4,586.61µs（p99.9 15,287µs），平均每 query 118.35 次 IO、30.87 hops，平均 IO 時間 4,041.68µs／query。
+- 轉換（`microbench/diskann_trace_to_mqsim.py`，輸出在 `<trace>/mqsim_replay/`）：
+  - 位址換算：整碟 sector − 6,400,000（nvme0n1p3 起點 6,397,952＋dm-linear 偏移 2,048）＝LV sector，再用 62 個 filefrag extents 換成 index 檔內 offset。
+  - 搜尋期間 index 範圍內的讀取 1,183,194 筆（另有 23,673 筆讀其他檔案，主要是載入 PQ；62 筆寫入；2 筆在搜尋窗外），全部有配對的完成事件。
+  - **交叉核對完全吻合**：其中 282 筆 8KB、6 筆 12KB、1 筆 16KB 是 kernel 合併相鄰 4KB 的結果，換回 4KB 共 1,183,491 次，等於 DiskANN `trace_access.csv` 的筆數，而且每個 sector 的次數逐一相同。
+  - 真機（block 層 issue→complete）：平均 406,895 IOPS、平均同時處理 40.2 筆；延遲平均 98.9µs、p50 82.9、p90 131.5、p99 382.8、p99.9 599.4、最大 1,263.5µs。唯一 4KB sector 1,010,571 個（重複讀約 15%）。
+- 對照合成 QD 掃描：QD32 為 357k IOPS／89µs、QD64 為 608k／105µs；DiskANN 平均 40 筆在途、407k IOPS 下平均 99µs，比同 QD 的均勻穩定負載稍高，推測來自突發性。
+
+### MQSim 修改與重播工具
+
+- `MQSIM_REQUEST_LOG=<path>`（`src/host/IO_Flow_Base.cpp`）：設定時每完成一筆請求寫一行「arrival enqueue complete start_lba lba_count type」；未設定時不影響任何行為。
+- `microbench/run_mqsim_trace_replay.sh <replay_dir> [config]`：用 `ssdconfig_t500_calibrated.xml` 建立 trace-based workload（Initial_Occupancy 75%，與校準一致；trace 模式會優先預寫被讀到的 LPA），執行並比較。
+- `microbench/compare_trace_replay.py`：依到達時間逐筆配對，比較延遲分布、逐筆相關、10 ms 時間序列的平均延遲與在途數；已用「真機資料當模擬結果」自我測試，各項完全相同。
+- **MQSim trace 模式 bug（2026-11-15 修正）**：第一次重播在預寫階段以「Unhandled address distribution type in FTL's preconditioning function」結束。`IO_Flow_Trace_Based::Get_statistics` 從未設定 `Address_distribution_type`、`generate_aligned_addresses`、`alignment_value`、hot/cold 比例與 `Working_set_ratio`（未初始化記憶體），FTL 預寫卻會讀這些欄位。修正：trace 統計明確設為 RANDOM_UNIFORM、不對齊、無 hot/cold、working set 比例 1（只影響預寫時穩態有效頁分布的估計；trace 位址照原樣使用）。合成負載路徑不受影響。失敗的那次執行已移出結果目錄。
+
+### 開放迴路重播結果（run_ssdconfig_t500_calibrated，2026-11-15）
+
+`FTL_EXIT read_entries_created_online=0 released_from_lpa_barrier=0 gc_executions=0`：所有讀到的頁面都有預寫，沒有 GC。1,183,194 筆請求全部完成，到達時間與真機逐筆相同。
+
+| 每筆延遲（µs） | 平均 | p1 | p50 | p90 | p99 | p99.9 | 最大 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| T500 全部 | 98.9 | – | 82.9 | 131.5 | 382.8 | 599.4 | 1,263.5 |
+| MQSim 全部 | 92.6 | – | 75.5 | 141.3 | 228.7 | 322.9 | 1,111.1 |
+| T500（扣掉前 0.2 s） | 96.7 | 70.4 | 82.7 | 128.5 | 359.7 | 595.0 | |
+| MQSim（扣掉前 0.2 s） | 92.8 | 73.0 | 75.5 | 141.7 | 229.3 | 322.1 | |
+
+| 超過門檻的比例（扣掉前 0.2 s） | >200µs | >300µs | >500µs |
+|---|---:|---:|---:|
+| T500 | 2.23% | 1.39% | 0.28% |
+| MQSim | 2.16% | 0.18% | 0.003% |
+
+解讀：
+1. **主體分布接近**：CDF 到約 90% 幾乎重疊；平均差 4%。p50 模擬低約 7µs，與 QD1 時「block 層 issue→complete 比 MQSim 裝置延遲多約 5µs」的邊界差一致；p90 模擬高約 13µs，與校準時 QD32–64 延遲成長略高（1.21／1.46 vs 1.16／1.37）一致。
+2. **真機尾端重很多**：>300µs 的比例 1.39% vs 0.18%，p99.9 595 vs 322µs。真機慢請求在時間上有聚集（38% 落在 10% 的 10 ms 區間）。同樣的到達時間（含 DiskANN 的突發性）在模型裡沒有產生這種尾端，所以尾端不是突發到達本身造成的，而是模型沒有的東西：SSD 內部的偶發慢事件（讀取重試／ECC、韌體背景工作等）或主機完成路徑（中斷、softirq）的延遲。只用 block trace 無法分辨兩者。合成掃描的 fio p99 在 QD32／64 是 159／232µs，也低於 DiskANN 的 383µs。
+3. **開頭 0.2 s 的暖機**：真機前 0.2 s 平均 142µs、p90 297µs（57,815 筆），之後才穩定；模型沒有這段。可能是 SSD 從省電狀態醒來或內部快取冷啟動，未查證。
+4. **時間序列反相關是開放迴路的假象**：1 ms 區間內，真機延遲與同區間到達數相關係數 −0.86（真機一變慢，閉迴路的 DiskANN 就少送請求）。重播照這些到達時間送，模型在那些區間反而變空、延遲變低，所以 10 ms 平均延遲相關係數 −0.52（含暖機 −0.66）。這不是模型錯，而是開放迴路比較的限制。
+5. **逐筆相關約 0（r＝−0.01）是預期的**：哪個 LBA 落在哪個 plane 由 FTL 決定，T500 與 MQSim 不同，個別請求的碰撞不同；只能比較分布。
+
+結論：在 DiskANN 讀取模式下，模型的主體延遲分布可信（約 10% 內），但低估尾端（p99 約 0.6 倍、p99.9 約 0.54 倍），也沒有真機的偶發慢區間。下一步要做閉迴路重播，才能比較 QPS 與每輪延遲，並避免第 4 點的假象。
+
+## 閉迴路重播（2026-11-15）
+
+目的：研究 SSD 內部行為時，讓 DiskANN 的每一輪讀取依賴「模擬中」上一輪的完成時間，而不是真機的時間戳記；這樣 QPS、每輪等待時間會隨 SSD 模型改變。
+
+MQSim 新增 `IO_Flow_Closed_Loop_Replay`（`src/host/IO_Flow_Closed_Loop_Replay.h/.cpp`），在 trace-based workload 加上 `Replay_Schedule_File` 即啟用（`File_Path` 的 ASCII trace 只用於預寫統計，與排程中的讀取完全相同）：
+- 每個 worker 依序重播「輪」：在輪開始後依實測 offset 送出該輪的讀取 → 等該輪全部讀取在模擬 SSD 中完成 → 加上實測的完成後主機時間（post）→ 加上實測的計算間隔（gap）→ 開始下一輪。
+- 只有裝置時間由模擬決定；主機端時間（送出路徑、完成路徑、搜尋計算、換 query）都取自真機。
+- `MQSIM_ROUND_LOG=<path>` 記錄每輪的開始、最後完成、結束時間。
+
+排程產生（`microbench/build_closed_loop_schedule.py`，輸出 `<trace>/closed_loop/`）：
+- 每一輪（query × iteration）以「相同 4KB sector、送出時間落在該輪 read_begin～read_end 內」對應 block 請求；1,183,194 筆 block 請求全部對應（kernel 合併造成的沿用 297 次＝282＋2×6＋3，與合併數完全一致），共 308,703 輪、16 個 worker。
+- 真機每輪：read_begin→read_end 平均 131.4µs（p50 116.1、p99 480.0）；送出前主機時間平均 5.2µs（p99 8.9）；最後完成到 DiskANN 收到平均 2.7µs（p99 8.0）。150 輪的 post 因時鐘些微負值被設為 0。
+- 依構造，「輪開始＋offset＋真機延遲＋post」恰好等於真機的 read_end，所以排程在真機延遲下會完全重現真機時間軸。
+- `microbench/compare_closed_loop.py` 自我測試（真機資料當模擬結果）：各項完全相同；由輪紀錄算出的 query 速率 3,438.8／s，與 DiskANN 回報 QPS 3,438.65 一致。
+
+假設與限制：DiskANN 每輪等 W 個讀取全部回來才處理，搜尋路徑與 SSD 快慢無關；主機時間視為固定（不模擬 CPU 競爭、I/O stack 變動）；W 個讀取的送出間隔沿用實測值。
+
+執行：`microbench/run_mqsim_closed_loop.sh <trace_dir> [config]`；`ROUNDS_PER_WORKER=N` 只重播每個 worker 的前 N 輪做煙霧測試。
+
+
+## 閉迴路啟動崩潰：編譯相依修正（2026-11-15）
+
+run_t500_closed_loop_20261115_045636在約0.07秒以signal11退出，沒有完成重播。查到IO_Flow_Parameter_Set.h與解析object在04:45更新，main.o仍為03:31；原Makefile未追蹤header依賴。新增Replay_Schedule_File改變物件layout時，混用舊配置大小與新解析程式可能越界；沒有core/backtrace，目前不能當作已動態證實的根因。
+
+已修正Makefile：編譯產生-MMD/-MP依賴檔並載入，Makefile變動也重編object，補各object的目錄依賴並去除重複main來源。完整重編譯消除混用；main.d確認包含IO_Flow_Parameter_Set.h，make -n -W的乾跑確認header變動會重編依賴來源。沒有啟動模擬。
+
+閉迴路腳本修正：無TAG且全輪模式時，避免command substitution最後條件為false導致set -e提前退出；模擬非零退出現在顯示狀態碼、目錄與stderr尾端，保留FAILED標記。舊失敗目錄保留。下一步由使用者先跑每worker200輪的短測，確認新binary能啟動並完成，再跑全輪；重編成功不等於segfault已經執行驗證消失。
+
+
+<!-- full-closed-loop-t500-20261115:start -->
+## T500完整閉迴路重播結果（2026-11-15）
+
+執行：`run_t500_full_20261115_050240`，設定 `ssdconfig_t500_calibrated.xml`；DiskANN trace為T16／W4／L100。此節從封存comparison.json與兩側round紀錄產生，沒有啟動新實驗。
+
+共308,703輪、10,000個query、1,183,194筆讀取。兩側輪數、排程read總數一致；HOST_EXIT generated=completed=1183194、waiting=0、software_map_entries=0。FTL_EXIT gc_executions=0、read_entries_created_online=0。這輪完成，沒有前次啟動崩潰或未排空問題。
+
+### 吞吐與平均值
+
+| 指標 | T500 | MQSim | 模擬相對差異 |
+|---|---:|---:|---:|
+| 重播時間 s | 2.9080 | 2.9186 | +0.36% |
+| Read IOPS | 406,881.4541 | 405,402.6327 | -0.36% |
+| Query rate /s | 3,438.8397 | 3,426.3412 | -0.36% |
+
+![吞吐比較](results/diskann_trace_20261114T202209Z_T16_W4_L100/closed_loop/run_t500_full_20261115_050240/report_figures/throughput.png)
+
+### 延遲分布
+
+| 指標 µs | T500 | MQSim | 模擬相對差異 |
+|---|---:|---:|---:|
+| 單筆讀取 mean | 98.89 | 91.07 | -7.91% |
+| 單筆讀取 p50 | 82.92 | 75.43 | -9.03% |
+| 單筆讀取 p90 | 131.48 | 138.49 | +5.33% |
+| 單筆讀取 p99 | 382.79 | 216.75 | -43.38% |
+| 單筆讀取 p99.9 | 599.43 | 303.99 | -49.29% |
+| 每輪read call mean | 131.39 | 131.50 | +0.09% |
+| 每輪read call p50 | 116.11 | 127.42 | +9.75% |
+| 每輪read call p90 | 173.82 | 192.51 | +10.76% |
+| 每輪read call p99 | 479.98 | 275.59 | -42.58% |
+| 每輪read call p99.9 | 716.04 | 361.88 | -49.46% |
+| Query I/O span mean | 4,573.45 | 4,577.01 | +0.08% |
+| Query I/O span p50 | 4,378.20 | 4,554.92 | +4.04% |
+| Query I/O span p90 | 5,206.24 | 4,971.06 | -4.52% |
+| Query I/O span p99 | 8,069.85 | 5,506.79 | -31.76% |
+| Query I/O span p99.9 | 15,238.99 | 6,159.77 | -59.58% |
+
+![延遲分位數比較](results/diskann_trace_20261114T202209Z_T16_W4_L100/closed_loop/run_t500_full_20261115_050240/report_figures/latency_quantiles.png)
+
+分位數圖使用對數y軸；mean是平均值，與後面的分位數是不同統計量，連線只供比較。
+
+### 分段時間趨勢
+
+![每50ms輪延遲趨勢](results/diskann_trace_20261114T202209Z_T16_W4_L100/closed_loop/run_t500_full_20261115_050240/report_figures/round_timeline.png)
+
+以各自時間軸的round start分入50ms區間；畫每區間mean與p99，最後區間可能不足50ms。閉迴路會讓同一query在兩側不同時刻開始，因此同時間區間不是相同query集合，不以曲線逐點差值推論同一批請求的快慢。
+
+### 判讀與適用範圍
+
+1. 整體query rate差−0.36%、平均每輪時間差+0.09%，支持模型在這份完整T16／W4／L100 trace下重現整體處理速度；不證明所有負載或內部資源行為已對齊。
+2. 每輪p50較真機高約9.7%，但p99低約42.6%、p99.9低約49.5%。均值接近可能包含分布中段偏高與尾端偏低的抵消，不能只看QPS宣稱延遲模型完整。
+3. Query I/O span只涵蓋該query第一個read_begin至最後read_end，並非完整端到端query latency；query rate也是該重播窗口下的速率。主機post/gap與送出offset沿用真機，屬固定主機時間假設，QPS不是完全獨立預測。
+4. 單筆latency兩側各1183194筆，已無煙霧測試的樣本數差異；真機為block issue→complete，模型使用自己的request log邊界，不能當作純NAND時間逐筆對齊。
+5. Batch barrier受一輪最慢請求影響，尾端低估可能影響分批策略與pipeline填滿的結論。尚不能僅由這些分位數辨識ECC、韌體背景工作或host完成路徑；不添加任意隨機延遲去配p99。
+6. 先前前200輪的巨大差距在完整重播平均上沒有延續；分段圖提供啟動與後續變化的觀察，但不因此排除後段的局部偏差。下一步依相同輪／query與batch大小比較最慢讀取、完成跨度及窗口變化，再決定是否需要新機制。
+
+來源：[comparison.json](results/diskann_trace_20261114T202209Z_T16_W4_L100/closed_loop/run_t500_full_20261115_050240/comparison.json)。圖表保留PNG／SVG；可用 `python3 -B microbench/plot_closed_loop_record.py <trace_dir> <run_dir>` 從既有資料重新產圖。
+<!-- full-closed-loop-t500-20261115:end -->
+
+### 舊結果是否受 header 相依問題影響（2026-11-15 檢查）
+
+原 Makefile 不追蹤 header，增量編譯可能混用舊物件。檢查各批次的 binary 來源：
+- 所有 `mqsim_calibration_*`／`mqsim_regress_*` 批次都由 `run_mqsim_calibration.sh --run` 執行，該腳本用 `make -B` 強制全部重編，並比對原始碼 hash，不受影響。
+- 開放迴路重播（`mqsim_replay/run_ssdconfig_t500_calibrated`，04:29）：最後一次全部重編是 cmdfirst 批次（含 `Channel_Arbitration` 的 header 變更）；之後到重播前只改了 `IO_Flow_Base.cpp` 與 `IO_Flow_Trace_Based.cpp` 兩個 .cpp，沒有改 header，增量編譯不會混用，結果有效。
+- 受影響的只有加入 `Replay_Schedule_File`（改 `IO_Flow_Parameter_Set.h`）後的第一次閉迴路執行（`run_t500_closed_loop_20261115_045636`，signal 11），已由上節的 Makefile 修正處理。
+
+### 尾端對整體效能的影響上限（2026-11-15）
+
+使用者觀點：尾端占比小的話，對整體效能影響也小，不一定需要調查。以 `real_rounds.csv` 與 `run_t500_full_20261115_050240` 量化：
+- 每個 worker 的時間中，讀取輪（read_begin→read_end）占 87.2%，其餘是主機計算。
+- 真機 >300µs 的輪占 2.78% 的輪數、9.73% 的輪時間；>500µs 占 0.84% 的輪數、3.90% 的輪時間。
+- 超過 250µs 的部分（尾端的「多出來」時間）：真機占輪時間 4.57%，模型 0.60%；超過 300µs：3.37% vs 0.17%。
+- 所以模型少掉的尾端約等於輪時間的 4%、worker 時間的約 3.5%；就算完全補上，QPS 也只會變動約 4% 以內。完整閉迴路 QPS 只差 −0.36%，是因為模型的中段（p50 +9.7%）稍慢，抵消了尾端偏快。
+
+決定：暫不調查尾端來源。研究時把「約 4% 的 QPS 不確定度」當成模型的解析度：派送策略造成的 QPS 差異若小於約 5%，不據此下結論；若研究問題本身是尾端延遲（例如最慢讀取、p99 輪時間），則需先回頭補尾端。

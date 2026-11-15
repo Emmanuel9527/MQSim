@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "../ssd/Stats.h"
 #include "IO_Flow_Base.h"
 #include "../ssd/Host_Interface_Defs.h"
@@ -258,6 +260,30 @@ IO_Flow_Base::IO_Flow_Base(const sim_object_id_type &name, uint16_t flow_id, LHA
 		sim_time_type request_delay = Simulator->Time() - request->Arrival_time;
 		STAT_serviced_request_count++;
 		STAT_serviced_request_count_short_term++;
+
+		//Optional per-request log for trace validation: MQSIM_REQUEST_LOG=<path> writes one line per completed request:
+		//arrival_ns enqueue_ns complete_ns start_lba lba_count type(1=read,0=write). Off unless the variable is set.
+		{
+			static FILE* request_log = NULL;
+			static bool request_log_checked = false;
+			if (!request_log_checked) {
+				request_log_checked = true;
+				const char* path = std::getenv("MQSIM_REQUEST_LOG");
+				if (path != NULL && path[0] != '\0') {
+					request_log = std::fopen(path, "w");
+					if (request_log == NULL) {
+						PRINT_ERROR("Cannot open MQSIM_REQUEST_LOG " << path)
+					}
+					std::fprintf(request_log, "arrival_ns enqueue_ns complete_ns start_lba lba_count type\n");
+				}
+			}
+			if (request_log != NULL) {
+				std::fprintf(request_log, "%llu %llu %llu %llu %u %d\n", (unsigned long long)request->Arrival_time,
+					(unsigned long long)request->Enqueue_time, (unsigned long long)Simulator->Time(),
+					(unsigned long long)request->Start_LBA, (unsigned int)request->LBA_count,
+					request->Type == Host_IO_Request_Type::READ ? 1 : 0);
+			}
+		}
 
 		STAT_sum_device_response_time += device_response_time;
 		STAT_sum_device_response_time_short_term += device_response_time;

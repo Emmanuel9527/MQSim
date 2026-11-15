@@ -333,5 +333,14 @@ void IO_Flow_Trace_Based::Get_statistics(Utils::Workload_Statistics &stats, LPA_
 
 	stats.Initial_occupancy_ratio = initial_occupancy_ratio;
 	stats.Replay_no = total_replay_no;
+	//These fields were never set for traces (uninitialized memory). The FTL preconditioning switches on
+	//Address_distribution_type and reads the alignment fields, so it aborted with "Unhandled address distribution type".
+	//Uniform is the neutral choice for the steady-state block-validity estimate; trace addresses are used as-is.
+	stats.Address_distribution_type = Utils::Address_Distribution_Type::RANDOM_UNIFORM;
+	stats.Working_set_ratio = 1.0;
+	stats.Ratio_of_hot_addresses_to_whole_working_set = 0;
+	stats.Ratio_of_traffic_accessing_hot_region = 0;
+	stats.generate_aligned_addresses = false;
+	stats.alignment_value = 1;
 }
 } // namespace Host_Components

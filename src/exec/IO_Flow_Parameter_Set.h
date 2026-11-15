@@ -64,6 +64,7 @@ public:
 	int Percentage_To_Be_Executed;
 	int Relay_Count; 
 	Trace_Time_Unit Time_Unit;
+	std::string Replay_Schedule_File;//Optional: non-empty selects completion-dependent (closed-loop) replay; File_Path then only feeds preconditioning statistics
 	
 	void XML_serialize(Utils::XmlWriter& xmlwriter);
 	void XML_deserialize(rapidxml::xml_node<> *node);

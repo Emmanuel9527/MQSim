@@ -448,6 +448,12 @@ void IO_Flow_Parameter_Set_Trace_Based::XML_serialize(Utils::XmlWriter& xmlwrite
 	}
 	xmlwriter.Write_attribute_string(attr, val);
 
+	if (!Replay_Schedule_File.empty()) {
+		attr = "Replay_Schedule_File";
+		val = Replay_Schedule_File;
+		xmlwriter.Write_attribute_string(attr, val);
+	}
+
 	xmlwriter.Write_close_tag();
 }
 
@@ -465,6 +471,8 @@ void IO_Flow_Parameter_Set_Trace_Based::XML_deserialize(rapidxml::xml_node<> *no
 				Percentage_To_Be_Executed = std::stoi(val);
 			} else if (strcmp(param->name(), "File_Path") == 0) {
 				File_Path = param->value();
+			} else if (strcmp(param->name(), "Replay_Schedule_File") == 0) {
+				Replay_Schedule_File = param->value();
 			} else if (strcmp(param->name(), "Time_Unit") == 0) {
 				std::string val = param->value();
 				std::transform(val.begin(), val.end(), val.begin(), ::toupper);

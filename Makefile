@@ -7,15 +7,15 @@ SRC_DIR   := $(addprefix src/,$(MODULES)) src
 BUILD_DIR := $(addprefix build/,$(MODULES)) build
 
 SRC       := $(foreach sdir,$(SRC_DIR),$(wildcard $(sdir)/*.cpp))
-SRC       := src/main.cpp $(SRC)
+SRC       := $(sort $(SRC))
 OBJ       := $(patsubst src/%.cpp,build/%.o,$(SRC))
 INCLUDES  := $(addprefix -I,$(SRC_DIR))
 
 vpath %.cpp $(SRC_DIR)
 
 define make-goal
-$1/%.o: %.cpp
-	$(CC) $(CC_FLAGS) $(INCLUDES) -c $$< -o $$@
+$1/%.o: %.cpp Makefile | $1
+	$(CC) $(CC_FLAGS) $(INCLUDES) -MMD -MP -MF $$(@:.o=.d) -MT $$@ -c $$< -o $$@
 endef
 
 .PHONY: all checkdirs clean
@@ -35,3 +35,6 @@ clean:
 	rm -f MQSim
 
 $(foreach bdir,$(BUILD_DIR),$(eval $(call make-goal,$(bdir))))
+
+# Compiler-generated header dependencies; keep after the default all target.
+-include $(OBJ:.o=.d)
