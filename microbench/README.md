@@ -8,10 +8,29 @@
 外部曲線接近，不代表已證明真機的 channel/die/FTL 內部行為。
 任何模型修改都必須記錄硬體機制、證據、參數範圍及未參與調參的驗證結果。
 
+## 腳本資料夾（2026-11-22 整理）
+
+腳本依研究主題分資料夾。執行時工作目錄可以是專案根目錄或 `microbench/`，以各腳本的說明為準；腳本會自己用所在位置推算專案根目錄。
+
+| 資料夾 | 主題 | 代表腳本 |
+|---|---|---|
+| `realssd/` | 本機真機量測（fio）：讀取延遲、吞吐、burst、裝置狀態、cache 探測、飽和量測 | `read_sweep.py`、`calibration_suite.py`、`run_calibration.sh`、`run_burst_sweep.sh`、`state_probe.sh`、`ssd_saturation_probe.sh` |
+| `calibration/` | MQSim 校準：讓 MQSim 對上真機 T500 | `mqsim_calibrate.py`、`run_mqsim_calibration.sh`、`mqsim_window_probe.py`、`validate_mqsim_observation.py` |
+| `trace_replay/` | DiskANN 真機紀錄 → MQSim 重演（open／closed loop）、fio 位址重演、SSD 內部時間分解 | `diskann_block_trace.sh`、`diskann_trace_to_mqsim.py`、`run_mqsim_closed_loop.sh`、`fio_addr_replay.sh`、`analyze_ssd_slack.py` |
+| `server_sweeps/` | 伺服器上的 DiskANN 策略掃描（P1／P4／N1／N2）與 explog 分析 | `diskann_policy_sweep.sh`、`diskann_nominate_sweep.sh`、`diskann_sim_sweep.sh`、`diskann_cache_sweep.sh`、`analyze_prefetch_prediction.py` |
+| `ladder/` | pipeline 階梯模擬（事件驅動的 SSD／主機時間模型） | `ladder_sim.py`、`ladder_sweep.py`、`ladder_table.py`、`ladder_coloc.py` |
+| `ssdpq/` | SSD 端 PQ、圖功能模擬、page 共置、死讀取 | `coarse_quant.py`、`graphsim.py`、`analyze_avoidable_reads.py`、`page_pack.c`、`verify_server_index.py` |
+| `common/` | 跨主題共用的程式：`explog.py`（explog 格式 `REC`、候選清單 `CandList`、`node_sector_fn`） | – |
+| `plots/` | 所有畫圖腳本，索引見 `plots/README.md` | – |
+
+- 設定與資料留在原處：`configs/`、`ssdconfig_t500_calibrated.xml`、`results/`、`reports/`、`figures/`。
+- 跨資料夾的 import 由腳本自己把需要的資料夾加進 `sys.path`（例如 `mqsim_calibrate.py` 加 `realssd/`，用到 explog 的腳本加 `common/`）。
+- 伺服器上的 checkout（`/home/user/MQSim`）要同步更新後，指令改成 `bash microbench/server_sweeps/diskann_policy_sweep.sh` 這樣的路徑。
+
 ## MQSim 校準入口
 
 校準以吞吐增益、延遲成長與轉折趨勢為主。計畫、測試紀錄及結果分析統一見 [mqsim_calibration.md](mqsim_calibration.md)。
-使用 `bash microbench/run_mqsim_calibration.sh --prepare` 只產生輸入；模擬仍由使用者明確執行 `--run`。
+使用 `bash microbench/calibration/run_mqsim_calibration.sh --prepare` 只產生輸入；模擬仍由使用者明確執行 `--run`。
 
 ## 執行原則
 
@@ -36,7 +55,7 @@
 ## 批次與 pipeline 需求探索
 
 針對 batch16／64／256 與持續補入比較的新計畫，請見 [PIPELINE_SWEEP.md](PIPELINE_SWEEP.md)。
-先由使用者執行 `bash microbench/run_pipeline_sweep.sh --pilot`；確認時序後，完整探索使用 `--run`，名目26分鐘加額外開銷。
+先由使用者執行 `bash microbench/realssd/run_pipeline_sweep.sh --pilot`；確認時序後，完整探索使用 `--run`，名目26分鐘加額外開銷。
 這個計畫尚未修正 fio replay drift，不可把目標速率直接當裝置實際收到的速率。
 
 ## Burst／smooth 負載掃描
@@ -48,9 +67,9 @@
 ```bash
 cd /home/emmanuel/projects/MQSim
 # 只看計畫，不啟動 fio
-bash microbench/run_burst_sweep.sh
+bash microbench/realssd/run_burst_sweep.sh
 # 使用者執行正式掃描
-bash microbench/run_burst_sweep.sh --run
+bash microbench/realssd/run_burst_sweep.sh --run
 ```
 
 - 目標速率：2,000 / 8,000 / 16,000 / 24,000 / 32,000 / 48,000 / 64,000 IOPS。
@@ -81,7 +100,7 @@ bash microbench/run_burst_sweep.sh --run
 也可只分析既有結果，不執行 fio：
 
 ```bash
-python3 -B microbench/analyze_burst_sweep.py microbench/results/實際目錄名稱
+python3 -B microbench/realssd/analyze_burst_sweep.py microbench/results/實際目錄名稱
 ```
 
 ## 五類實驗
@@ -104,20 +123,20 @@ python3 -B microbench/analyze_burst_sweep.py microbench/results/實際目錄名�
 cd /home/emmanuel/projects/MQSim
 
 # 列出計畫：沒有 I/O 實驗
-bash microbench/run_calibration.sh --family size
+bash microbench/realssd/run_calibration.sh --family size
 
 # 正式執行：擇一，不要在多個終端同時執行
-bash microbench/run_calibration.sh --family size --run
-bash microbench/run_calibration.sh --family size-qd --run
-bash microbench/run_calibration.sh --family locality --run
-bash microbench/run_calibration.sh --family jobs --run
-bash microbench/run_calibration.sh --family arrival --run
+bash microbench/realssd/run_calibration.sh --family size --run
+bash microbench/realssd/run_calibration.sh --family size-qd --run
+bash microbench/realssd/run_calibration.sh --family locality --run
+bash microbench/realssd/run_calibration.sh --family jobs --run
+bash microbench/realssd/run_calibration.sh --family arrival --run
 ```
 
 若只想先跑約 30 分鐘、涵蓋五類的探索版：
 
 ```bash
-bash microbench/run_calibration.sh --family all \
+bash microbench/realssd/run_calibration.sh --family all \
   --sizes-kib 4 64 1024 --qds 1 32 \
   --working-sets-mib 256 32768 --jobs 1 8 --rates 2000 10000 \
   --runtime 30 --ramp 10 --repeats 2 --run
@@ -131,7 +150,7 @@ bash microbench/run_calibration.sh --family all \
 新增套件尚未由代理在真機執行 fio。建議先跑下列短測確認當地 fio 的選項與輸出格式；**短測不是校準資料**。
 
 ```bash
-bash microbench/run_calibration.sh --family all \
+bash microbench/realssd/run_calibration.sh --family all \
   --sizes-kib 4 --qds 1 --working-sets-mib 256 --jobs 1 2 \
   --rates 1000 --arrival-seconds 1 --runtime 2 --ramp 0 --repeats 1 --run
 ```
@@ -183,11 +202,11 @@ SHA-256 驗證複製完整性，並保留 tmpfs 原件；不覆寫既有結果�
 
 ```bash
 # 使用實驗最後印出的實際目錄；只分析、不啟動 fio
-bash microbench/run_calibration.sh --analyze microbench/results/mqsim_suite_實際名稱
+bash microbench/realssd/run_calibration.sh --analyze microbench/results/mqsim_suite_實際名稱
 ```
 
 完成執行會自動分析。已有 `analysis/` 時拒絕覆寫；失敗分析留在 `.analysis-*` 供診斷。
-不同 suite 或 family 的結果不能直接交給舊版 `analyze_read_sweep.py`，以免把不同 request size／job 數混成同一條 QD 曲線。
+不同 suite 或 family 的結果不能直接交給舊版 `realssd/analyze_read_sweep.py`，以免把不同 request size／job 數混成同一條 QD 曲線。
 
 ## MQSim 比較規則
 
@@ -210,7 +229,7 @@ bash microbench/run_calibration.sh --analyze microbench/results/mqsim_suite_實�
 
 ## 原始 QD sweep 詳細說明
 
-以下保留既有 `read_sweep.py` 的參數、輸出與量測語意；五類新實驗請使用上方的 `run_calibration.sh`。
+以下保留既有 `realssd/read_sweep.py` 的參數、輸出與量測語意；五類新實驗請使用上方的 `realssd/run_calibration.sh`。
 
 ### Goal and scientific constraints
 
@@ -233,13 +252,13 @@ From `/home/emmanuel/projects/MQSim` in the ordinary host terminal:
 
 ```bash
 # Read-only metadata checks and randomized schedule, no benchmark:
-python3 microbench/read_sweep.py
+python3 microbench/realssd/read_sweep.py
 
 # Short functional test, not calibration data:
-python3 microbench/read_sweep.py --qds 1 8 --repeats 1 --runtime 3 --ramp 1 --run
+python3 microbench/realssd/read_sweep.py --qds 1 8 --repeats 1 --runtime 3 --ramp 1 --run
 
 # Baseline: 8 QDs x 3 repeats x (10 s warmup + 30 s measurement), about 16 minutes:
-python3 microbench/read_sweep.py --run
+python3 microbench/realssd/read_sweep.py --run
 ```
 
 The default input is the existing 39 GiB SIFT100M block-shuffled disk index,
@@ -329,7 +348,7 @@ boundaries explicit.
 
 ### Uniform versus burst arrivals (separate suite)
 
-Timestamped smooth/burst replay is now available in `calibration_suite.py`; see
+Timestamped smooth/burst replay is now available in `realssd/calibration_suite.py`; see
 [the suite guide](#五類實驗). Its intended-versus-recorded
 arrival audit must be checked before interpreting results.
 
@@ -355,5 +374,5 @@ parameter sets. No calibration is claimed by merely creating this benchmark.
 The benchmark engine is fio; Python only plans runs, collects host metadata,
 invokes fio and archives its unmodified outputs. JSON+ histogram bins allow
 later distribution analysis without fabricating individual request samples.
-The maintained launcher remains `microbench/read_sweep.py`; persistent measured
+The maintained launcher remains `microbench/realssd/read_sweep.py`; persistent measured
 results are under `microbench/results/`, ignored by Git.

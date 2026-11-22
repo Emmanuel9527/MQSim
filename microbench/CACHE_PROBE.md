@@ -3,9 +3,9 @@
 Run from MQSim:
 
 ```bash
-python3 microbench/cache_probe.py             # inspect plan only
-python3 microbench/cache_probe.py --run       # read-only real-device test
-python3 microbench/analyze_cache_probe.py microbench/results/<mqsim_cache_probe_name>
+python3 microbench/realssd/cache_probe.py             # inspect plan only
+python3 microbench/realssd/cache_probe.py --run       # read-only real-device test
+python3 microbench/realssd/analyze_cache_probe.py microbench/results/<mqsim_cache_probe_name>
 ```
 
 The runner uses fio's v2 read_iolog and replay_no_stall, not a custom I/O engine.

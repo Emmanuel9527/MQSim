@@ -32,9 +32,9 @@
 ```bash
 cd /home/emmanuel/projects/MQSim
 # 只列計畫，沒有fio或資料集讀取
-bash microbench/run_pipeline_sweep.sh --plan
+bash microbench/realssd/run_pipeline_sweep.sh --plan
 # 新參數與時序短測，16個條件各2秒，非校準資料
-bash microbench/run_pipeline_sweep.sh --pilot
+bash microbench/realssd/run_pipeline_sweep.sh --pilot
 ```
 
 先查看 pilot 的 `pipeline_analysis/report.md` 與 `per_run.csv`，尤其低負載8,192的三個batch：
@@ -43,7 +43,7 @@ bash microbench/run_pipeline_sweep.sh --pilot
 
 ```bash
 # 確認短測與時序限制後，才執行完整掃描
-bash microbench/run_pipeline_sweep.sh --run
+bash microbench/realssd/run_pipeline_sweep.sh --run
 ```
 
 繼續使用既有 fio v3 replay，已知 pacing drift 尚未修正。這輪不聲稱修好了它。

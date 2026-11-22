@@ -3,14 +3,14 @@
 From the MQSim repository:
 
 ```bash
-python3 microbench/analyze_read_sweep.py microbench/results/<run-name>
+python3 microbench/realssd/analyze_read_sweep.py microbench/results/<run-name>
 ```
 
 To wait for the archive of a currently running sweep, use its exact printed
 run-directory name (not an older test run):
 
 ```bash
-python3 microbench/analyze_read_sweep.py microbench/results/<run-name> --wait --timeout 3600
+python3 microbench/realssd/analyze_read_sweep.py microbench/results/<run-name> --wait --timeout 3600
 ```
 
 The archive only appears under its final name after copy verification. No new

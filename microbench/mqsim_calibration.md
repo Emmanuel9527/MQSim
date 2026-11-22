@@ -73,20 +73,20 @@ Burst、request-size與locality曲線是後續交叉檢查，不能以本輪QD�
 
 ```bash
 cd /home/emmanuel/projects/MQSim
-bash microbench/run_mqsim_calibration.sh --prepare --qds 1 32 --seeds 321 --requests 4096
+bash microbench/calibration/run_mqsim_calibration.sh --prepare --qds 1 32 --seeds 321 --requests 4096
 ```
 
 把上一步印出的新目錄帶入以下指令，才會編譯並執行MQSim。這不會讀取SIFT檔或啟動fio：
 
 ```bash
-bash microbench/run_mqsim_calibration.sh --run microbench/results/實際準備目錄
+bash microbench/calibration/run_mqsim_calibration.sh --run microbench/results/實際準備目錄
 ```
 
 功能模擬成功後，準備24個診斷cases並執行：
 
 ```bash
-bash microbench/run_mqsim_calibration.sh --prepare
-bash microbench/run_mqsim_calibration.sh --run microbench/results/上一步印出的目錄
+bash microbench/calibration/run_mqsim_calibration.sh --prepare
+bash microbench/calibration/run_mqsim_calibration.sh --run microbench/results/上一步印出的目錄
 ```
 
 每case預設wall-time timeout3600秒；已完成4096筆短測，但100k筆整輪速度尚未量過，不承諾總耗時。失敗保留INCOMPLETE、stdout/stderr，不假造未完成結果。
@@ -96,7 +96,7 @@ bash microbench/run_mqsim_calibration.sh --run microbench/results/上一步印�
 ## 可選：參數敏感度（先看基準，再執行）
 
 ```bash
-bash microbench/run_mqsim_calibration.sh --prepare --sensitivity
+bash microbench/calibration/run_mqsim_calibration.sh --prepare --sensitivity
 ```
 
 這會準備7個候選×8QD×3seeds=168次，仍不執行模擬：
@@ -406,7 +406,7 @@ QD32→128時，真機各repeat吞吐只增加3.15–4.40%，延遲增加3.832�
 
 ```bash
 cd /home/emmanuel/projects/MQSim
-bash microbench/run_mqsim_calibration.sh --run microbench/results/mqsim_calibration_sensitivity_round1
+bash microbench/calibration/run_mqsim_calibration.sh --run microbench/results/mqsim_calibration_sensitivity_round1
 ```
 
 
@@ -478,7 +478,7 @@ bash microbench/run_mqsim_calibration.sh --run microbench/results/mqsim_calibrat
 
 ```bash
 cd /home/emmanuel/projects/MQSim
-bash microbench/run_observation_check.sh
+bash microbench/calibration/run_observation_check.sh
 ```
 
 六組：兩組legacy（QD1、32）應與已封存pilot的IOPS及既有latency指標完全一致；另四組是256MiB／32GiB × random／streaming，QD32，各4096筆。沿用pilot初始化與裝置設定，固定seed321。驗證完成bytes、read觀測數、mapping已關閉、TSU departure數；差異即停止並保留INCOMPLETE。每次建立新目錄，保存binary、來源雜湊、輸入、stdout/stderr、XML及結果manifest，紀錄回寫本文件。
@@ -502,7 +502,7 @@ QD1完成4096筆、mapping blocked 3881筆、queue departures 4096；QD32完成4
 
 已修正：PHY三個queue明確標記為data-out queue，Queue_Probe依分類分別累積；NVMe XML新增Observed_Read_PHY_Data_Out_Queue_Sum_NS及Observed_Read_PHY_Data_Out_Departures。原TSU檢查維持，並要求本純讀短測PHY出列數介於0與完成數之間。PHY欄位只量等待佇列停留，不包含實際data transfer，也不代表所有PHY等待。
 
-保留舊INCOMPLETE與所有原始資料。再次執行 `bash microbench/run_observation_check.sh` 會建立新目錄，完整重跑六組，不覆蓋舊結果。新增分類的執行正確性仍待使用者重跑確認；未調整任何NAND時間、排程優先權或服務事件。
+保留舊INCOMPLETE與所有原始資料。再次執行 `bash microbench/calibration/run_observation_check.sh` 會建立新目錄，完整重跑六組，不覆蓋舊結果。新增分類的執行正確性仍待使用者重跑確認；未調整任何NAND時間、排程優先權或服務事件。
 
 <!-- calibration-run:cb836ed0eb3f71b5:begin -->
 ## 觀測驗證：mqsim_observation_check_322228e8
@@ -559,7 +559,7 @@ QD1完成4096筆、mapping blocked 3881筆、queue departures 4096；QD32完成4
 
 checkpoint依既有completion回呼觸發：越過logging period後寫入，另補初始與固定請求數最後完成的snapshot；不新增模擬排程事件。修正short-term delay分母的空窗口檢查。log未啟用時不輸出，checkpoint不是逐筆request/NAND事件軌跡；目前不宣稱已量到每筆command的issue/completion。NVMe的mapping／TSU／PHY觀測仍在最後XML，尚未進入分段log。
 
-新增 `mqsim_window_probe.py` 與 `run_window_probe.sh`。四組：QD32、4KiB、seed321，256MiB／32GiB × RANDOM_UNIFORM／STREAMING，使用精確sector範圍；初始化沿用pilot。每10ms模擬時間附近的完成事件記錄一次checkpoint。後處理以累計差值重算窗口IOPS、完成請求平均latency、CMT queries/misses與mapping讀取數，產生windows.csv與PNG/SVG並更新本文件。
+新增 `calibration/mqsim_window_probe.py` 與 `calibration/run_window_probe.sh`。四組：QD32、4KiB、seed321，256MiB／32GiB × RANDOM_UNIFORM／STREAMING，使用精確sector範圍；初始化沿用pilot。每10ms模擬時間附近的完成事件記錄一次checkpoint。後處理以累計差值重算窗口IOPS、完成請求平均latency、CMT queries/misses與mapping讀取數，產生windows.csv與PNG/SVG並更新本文件。
 
 預先選定warmup切點1模擬秒，不重置快取／模型狀態。跨切點窗口與generated達上限的最後區間不納入後段摘要；後段仍須檢查趨勢是否漂移，1秒不等於已證實穩態。窗口latency採「在此窗口完成」母體，可能包含窗口前已送入的請求；mapping計數與host completion不是一一對應。單flow下才解讀全裝置mapping/CMT計數。
 
@@ -567,7 +567,7 @@ checkpoint依既有completion回呼觸發：越過logging period後寫入，另�
 
 ```bash
 cd /home/emmanuel/projects/MQSim
-bash microbench/run_window_probe.sh --smoke
+bash microbench/calibration/run_window_probe.sh --smoke
 ```
 
 短測可能不到1模擬秒；後段摘要顯示N/A屬合理結果，不以此測穩態。四組用於確認log欄位、完整snapshot與分析流程。正式模式每組16,777,216筆＝64GiB，足以讓STREAMING走過32GiB兩圈，但不保證暖機充分；執行時間尚無實測，先檢查短測再決定是否跑正式模式。每case timeout4小時。腳本不執行fio，不替使用者啟動實驗。
@@ -626,11 +626,11 @@ streaming大量miss並未等於同數量的mapping NAND讀取，支持追查共�
 
 SSD_Device將設定速率傳給ONFI_Channel_NVDDR2；資料in/out共用修正，command/setup等其他時序不變。直接呼叫原channel constructor且未設定rate的路徑保留原時間API。舊333MT/s也會受精度修正影響：4KiB payload舊12288ns、新12301ns；500MT/s為8192ns；2400MT/s為1707ns。這是payload傳輸時間，不含command/setup，也不是NAND array read latency。不能再要求舊333設定的IOPS逐位完全一致，須使用修正後reference作控制。
 
-`microbench/test_channel_transfer.cpp`測試已離線執行：檢查上述預期值、1／3byte尾端、零長度、零rate拒絕、bytes單調性、提高速率不增加時間。未啟動模擬。2400只是算術驗證，尚未套用到本機候選配置；不同ONFI代際的command/setup仍需另行證據。
+`microbench/calibration/test_channel_transfer.cpp`測試已離線執行：檢查上述預期值、1／3byte尾端、零長度、零rate拒絕、bytes單調性、提高速率不增加時間。未啟動模擬。2400只是算術驗證，尚未套用到本機候選配置；不同ONFI代際的command/setup仍需另行證據。
 
 ### 下一個實驗：只改channel共享程度
 
-`mqsim_window_probe.py`新增 `--profile reference|four_channel` 與 `--requests`：reference為8channel×4chip；four_channel為4channel×8chip，兩者其餘die／plane／block／page設定相同，總chip/die與模型容量不變。workload Channel_IDs與Chip_IDs同步更新。四通道的方向有MAP1602公開資訊支持，但8chip/channel是控制變因安排，不是GM7 BOM；目前仍為舊MLC幾何，不能稱已對齊2TB TLC硬體。
+`calibration/mqsim_window_probe.py`新增 `--profile reference|four_channel` 與 `--requests`：reference為8channel×4chip；four_channel為4channel×8chip，兩者其餘die／plane／block／page設定相同，總chip/die與模型容量不變。workload Channel_IDs與Chip_IDs同步更新。四通道的方向有MAP1602公開資訊支持，但8chip/channel是控制變因安排，不是GM7 BOM；目前仍為舊MLC幾何，不能稱已對齊2TB TLC硬體。
 
 兩組均維持333MT/s、原NAND時序與CMT，只切換拓撲；每組四種地址／範圍案例、每case1,048,576筆＝4GiB，checkpoint分段方式相同。小範圍streaming走16圈，32GiB只走1/8圈，不能拿它宣稱大範圍已穩態。主要觀察後段是否持續漂移、channel共享是否改變mapping命令率與吞吐；若只改絕對數值卻無法解釋地址／範圍趨勢，不把它當校準成功。
 
@@ -638,8 +638,8 @@ SSD_Device將設定速率傳給ONFI_Channel_NVDDR2；資料in/out共用修正，
 
 ```bash
 cd /home/emmanuel/projects/MQSim
-bash microbench/run_window_probe.sh --profile reference --requests 1048576 &&
-bash microbench/run_window_probe.sh --profile four_channel --requests 1048576
+bash microbench/calibration/run_window_probe.sh --profile reference --requests 1048576 &&
+bash microbench/calibration/run_window_probe.sh --profile four_channel --requests 1048576
 ```
 
 每次建立獨立結果目錄並自動分析／畫圖到本文件；結果仍由使用者執行後判讀。此步驟不修改根目錄ssdconfig.xml、不重寫舊輸出，不同時改NAND technology、CMT或速率來追曲線。
@@ -676,7 +676,7 @@ bash microbench/run_window_probe.sh --profile four_channel --requests 1048576
 
 ```bash
 cd /home/emmanuel/projects/MQSim
-bash microbench/run_window_probe.sh --profile reference --requests 1048576 --case RANDOM_UNIFORM_32768MiB
+bash microbench/calibration/run_window_probe.sh --profile reference --requests 1048576 --case RANDOM_UNIFORM_32768MiB
 ```
 
 若仍少9筆，腳本預期再次標記INCOMPLETE；這是定位實驗，不以成功退出作唯一判準。查看該case stderr.txt中的ENGINE_EXIT、HOST_EXIT與HOST_PENDING，再決定是否需要裝置端fetch／mapping事件追蹤。本輪沒有放寬完成數檢查、沒有修改排程以掩蓋失敗，也不需要重跑其餘七個案例。
@@ -756,7 +756,7 @@ bash microbench/run_window_probe.sh --profile reference --requests 1048576 --cas
 - false時`GC_and_WL_Unit_Page_Level::Check_gc_required`直接返回，不再啟動GC。static wear-leveling只在erase完成後觸發，因此也不會發生。
 - 無GC時區塊不會回收：使用者寫入遇到空閒區塊不足時，原本會靜默等待GC；現在改為明確報錯並結束，避免再出現事件耗盡卻未完成的情況。
 - 讀取未寫入LPA仍會配置實體頁並產生mapping寫回（program）；關閉GC只移除GC搬移與erase，這部分混淆仍在，可由`FTL_EXIT read_entries_created_online`量測。
-- `mqsim_window_probe.py`新增`--no-gc`，寫入該欄位並在plan.json記錄`gc_enabled`。其他腳本尚未加此選項。
+- `calibration/mqsim_window_probe.py`新增`--no-gc`，寫入該欄位並在plan.json記錄`gc_enabled`。其他腳本尚未加此選項。
 
 完整編譯與Python語法檢查通過，尚未執行模擬。
 
@@ -789,7 +789,7 @@ bash microbench/run_window_probe.sh --profile reference --requests 1048576 --cas
 
 1. `TSU_Priority_OutOfOrder::get_next_write_service_queue`優先回傳`MappingWriteTRQueue`，與讀取端mapping優先一致。寫入仍只在chip沒有可服務讀取時發出。只修了目前使用的scheduler。
 2. 新增可選flow欄位`<Precondition_Full_Working_Set>true</Precondition_Full_Working_Set>`（預設false）：在原隨機佔用之外，把working set每一頁補進preconditioning集合，stderr印`PRECONDITION_FULL_WORKING_SET`與補入頁數。working set外仍維持原隨機佔用。對應真機fio讀取的是已寫滿的檔案。
-3. `mqsim_window_probe.py`新增`--full-ws`，plan.json記錄`precondition_full_working_set`。
+3. `calibration/mqsim_window_probe.py`新增`--full-ws`，plan.json記錄`precondition_full_working_set`。
 
 驗證判準：`--no-gc`單獨執行時`Issued_Flash_Program_CMD`應大於0，且不再出現約2.2秒後的188k跳升；`--no-gc --full-ws`時`read_entries_created_online`應為0，mapping寫入應接近0，後段應維持單一平台。
 
@@ -830,7 +830,7 @@ bash microbench/run_window_probe.sh --profile reference --requests 1048576 --cas
 
 對既有基準的影響：舊24組基準同樣有約22%讀取打到未寫入頁，但跳升約在第25萬筆後才出現，100k筆內未觸及；fe6640f9的QD32為112.6k／284µs，與舊基準QD32（112.5k／284µs）幾乎相同。舊QD曲線大致不受此假象影響，但仍以乾淨設定重跑為準。
 
-`mqsim_calibrate.py prepare`新增`--clean`：GC_Enabled=false、精確32GiB working set（Working_Set_Sectors=67108864）、Precondition_Full_Working_Set=true。
+`calibration/mqsim_calibrate.py prepare`新增`--clean`：GC_Enabled=false、精確32GiB working set（Working_Set_Sectors=67108864）、Precondition_Full_Working_Set=true。
 
 <!-- calibration-run:cfdee96ee2d6c550:begin -->
 ## 分段checkpoint實驗：mqsim_windows_ed0f4ed5
@@ -985,11 +985,11 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 
 - 逐點中位數不是單一裝置狀態下的 QD 曲線，不應直接拿來調 NAND 參數。拿模型去追 25k 天花板，等於用 NAND 拓撲去解釋一個可能來自控制器狀態的限制。
 - 對 NAND transaction batching 的研究來說，兩個狀態的 knee 完全不同（慢狀態約 QD16–32，快狀態 QD64 以上仍在長），分批結論會依狀態而異。需要先知道哪個狀態代表 DiskANN 實際執行時的裝置。
-- 新增 `microbench/state_probe.sh` 與 `microbench/analyze_state_probe.py`：在 fio 量測期間以 1 Hz 記錄溫度（hwmon）、`/proc/diskstats` 的主機讀寫，並在每個階段前後快照 `nvme smart-log`（thermal transition 計數與時間）、電源狀態、HMB、APST。
+- 新增 `microbench/realssd/state_probe.sh` 與 `microbench/realssd/analyze_state_probe.py`：在 fio 量測期間以 1 Hz 記錄溫度（hwmon）、`/proc/diskstats` 的主機讀寫，並在每個階段前後快照 `nvme smart-log`（thermal transition 計數與時間）、電源狀態、HMB、APST。
 
 ## state_probe_20261114 結果：排除溫度與主機寫入
 
-資料：`results/state_probe_20261114`，分析：`analyze_state_probe.py`。
+資料：`results/state_probe_20261114`，分析：`realssd/analyze_state_probe.py`。
 
 - 溫度：全程 26.9–42.9°C。HCTM 門檻 TMT1=75°C、TMT2=80°C；`thm_temp1/2_trans_count` 與 total time 從頭到尾都是 0。**不是熱限速。**
 - 主機對 nvme0n1 的寫入：慢狀態大多數秒數為 0 writes/s。qd128 期間另有約 641MB 主機寫入（`data_units_written` +1252），但 qd16_a／qd16_b 寫入幾乎為 0 仍然是慢狀態。**不是同碟背景寫入造成。**
@@ -1011,7 +1011,7 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 
 ### 對 batching 研究的意義
 
-如果閒置空檔能讓裝置回到快狀態，那麼「批次之間的空檔」就會改變裝置狀態本身，而不只是改變排隊。這正是 NAND_TRANSACTION_BATCHING.md 裡「inter-batch gaps」那條假說要面對的混淆。下一步用 `gap_probe.sh`：先連續負載 30s 進入慢狀態，再以「2s 負載＋G ms 閒置」掃 G=0/20/50/100/200/500/1000/3000，APST 開／關各一輪（透過 `pm_qos_latency_tolerance_us`，結束時還原）。
+如果閒置空檔能讓裝置回到快狀態，那麼「批次之間的空檔」就會改變裝置狀態本身，而不只是改變排隊。這正是 NAND_TRANSACTION_BATCHING.md 裡「inter-batch gaps」那條假說要面對的混淆。下一步用 `realssd/gap_probe.sh`：先連續負載 30s 進入慢狀態，再以「2s 負載＋G ms 閒置」掃 G=0/20/50/100/200/500/1000/3000，APST 開／關各一輪（透過 `pm_qos_latency_tolerance_us`，結束時還原）。
 
 ## 伺服器 Crucial T500 對照（state_probe_server_20261114）
 
@@ -1032,7 +1032,7 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 - 溫度 28.9–43.9°C，thermal 計數全 0。
 - 和 GM7 快狀態比：QD1 13.0k vs 10k，QD16 188k vs 126k，QD128 426k vs 約 250k（GM7 只有 QD64 的 5 秒）。
 - 推論：GM7 的雙狀態是該顆裝置（DRAM-less／HMB、MAP1602 韌體）的行為，不是 Linux 或量測方法造成。兩顆的控制器也不同，無法只歸因於 DRAM 有無。
-- `read_sweep.py` 的裝置檢查改為會追 device-mapper 的 `slaves/`，讓 LVM 上的檔案也能通過（原本只接受分割區直接在 nvme0n1 上）。
+- `realssd/read_sweep.py` 的裝置檢查改為會追 device-mapper 的 `slaves/`，讓 LVM 上的檔案也能通過（原本只接受分割區直接在 nvme0n1 上）。
 
 ## T500 單 job QD 掃描（mqsim_long_20261113T233458Z_a3018661）
 
@@ -1053,7 +1053,7 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 - QD1→32 幾乎線性擴張（每次加倍約 1.9–2.0 倍），延遲只從 77µs 升到 89µs。
 - **QD64/128 的 425k 上限是主機端限制，不是 SSD**：fio usr+sys ≈ 99.5%，等於單一 fio 執行緒用滿一顆核心；context switch 從約 300 萬掉到約 3 千（執行緒一直在忙，不再睡眠）。QD128 延遲剛好是 QD64 的 2 倍，是排在主機端的佇列。
 - QD32 時 CPU 已 86%，延遲 89µs 可能也帶一點主機成分。可視為裝置行為的範圍：QD1–16 確定，QD32 待多 job 對照確認。
-- 尚未觀察到 T500 本身的轉折點。`read_sweep.py`／`run_long_baseline.sh` 新增 `--jobs`／`JOBS=`（每個 total QD 平均分給多個 job，`group_reporting=1`）；`check_convergence.py` 改為逐窗加總多個 job 的 IOPS log。
+- 尚未觀察到 T500 本身的轉折點。`realssd/read_sweep.py`／`realssd/run_long_baseline.sh` 新增 `--jobs`／`JOBS=`（每個 total QD 平均分給多個 job，`group_reporting=1`）；`realssd/check_convergence.py` 改為逐窗加總多個 job 的 IOPS log。
 
 ## 資料保存位置與目前狀態（2026-11-14）
 
@@ -1079,7 +1079,7 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 | `mqsim_calibration_20261115T_t500_cmdfirst` | COMMAND_FIRST × PCIe／channel，24 case（已完成；校準候選） | 無（可由 plan 重跑）；參數另存 `microbench/ssdconfig_t500_calibrated.xml`（git 追蹤） |
 
 目前狀態：
-- 校準目標暫定改為 T500（單一狀態、自帶 DRAM、DiskANN 資料在同一台）。GM7 的雙狀態保留為旁證；`gap_probe.sh` 尚未執行，暫緩。
+- 校準目標暫定改為 T500（單一狀態、自帶 DRAM、DiskANN 資料在同一台）。GM7 的雙狀態保留為旁證；`realssd/gap_probe.sh` 尚未執行，暫緩。
 - ~~待辦：T500 4-job 掃描~~ 已完成（`mqsim_long_20261114T103323Z_b415d92e`，見下節）。
 - ~~進行中：MQSim `mqsim_calibration_20261114T123616Z_694a754d`~~ 已完成：ideal mapping 讓 QD1 對上（88 vs 77µs），但上限只有 256k，瓶頸是 MQSim 每顆 chip 一次只執行一個 die（見「ideal_map 結果解讀」）。
 - ~~已準備、待執行：`mqsim_calibration_20261114T_t500_topo`~~ 已完成：chip64_fast 上限 785k，被 MQSim 的 PCIe 設定（1.0 GB/s×4）卡住；見「chip 數／時序 2×2 結果解讀」。
@@ -1212,7 +1212,7 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 - 粗估有效平行度（推論，非 BOM）：上限 × 低負載延遲 ≈ 1.05M × 80µs ≈ 84 個同時服務中的讀取。低負載延遲含主機與控制器開銷，NAND 本身的 tR 更短，所以實際平行單元可能更少。
 - 與 MQSim 乾淨基準（2MiB CMT、64 die／128 plane）相比：sim QD1 161µs（其中約一半是 mapping 讀取），QD128 才 150k。T500 有自帶 DRAM，整張 L2P 常駐 DRAM，不該有 mapping 讀取。所以第一步改用 `Ideal_Mapping_Table=true`（所有 mapping 都在 DRAM），再調 NAND 時序與拓撲。之前在 GM7（DRAM-less）情境下暫緩 ideal mapping 的理由，對 T500 不適用。
 
-工具變更：`mqsim_calibrate.py prepare` 支援多個 `--reference`（後者覆蓋重疊的 repeat/QD；此次 QD1–2 來自單 job、QD4–512 來自 4-job，不同 archive 的同號 repeat 不是同一次執行），以及 `--variant NAME KEY=VALUE…`、`--base-override KEY=VALUE…`。
+工具變更：`calibration/mqsim_calibrate.py prepare` 支援多個 `--reference`（後者覆蓋重疊的 repeat/QD；此次 QD1–2 來自單 job、QD4–512 來自 4-job，不同 archive 的同號 repeat 不是同一次執行），以及 `--variant NAME KEY=VALUE…`、`--base-override KEY=VALUE…`。
 
 ## ideal_map 結果解讀（mqsim_calibration_20261114T123616Z_694a754d）
 
@@ -2451,7 +2451,7 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 - 已有 SIFT100M disk index：`/home/user/DiskANN/build/data/SIFT100M/disk_index_SIFT100M_base100M_R64_L100_A1.2_disk.index`（40.96GB，float，R64 L100），query `/home/user/DiskANN/build/data/SIFT100M/bigann_query.fbin`（10,000 筆）。
 - DiskANN_cpp（`vucann` 分支 21279b0）已在伺服器編譯：`/home/user/DiskANN_cpp/build/apps/search_disk_index`；trace-cmd、blktrace、filefrag 都已安裝。
 
-工具：`microbench/diskann_block_trace.sh`（伺服器執行）：預設 T16／W4／L100／K10、不快取節點；記錄 block_rq_issue／complete、DiskANN per-iteration trace、filefrag（前後各一次）、dmsetup table、分區起點、diskstats。
+工具：`microbench/trace_replay/diskann_block_trace.sh`（伺服器執行）：預設 T16／W4／L100／K10、不快取節點；記錄 block_rq_issue／complete、DiskANN per-iteration trace、filefrag（前後各一次）、dmsetup table、分區起點、diskstats。
 
 ### 第一次抓 trace 失敗（diskann_trace_20261114T201912Z_T16_W4_L100）
 
@@ -2463,7 +2463,7 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 
 - 設定：SIFT100M uint8 disk index（R64 L100，40.96GB），10,000 query，T16、W4、L100、K10、不快取節點；trace-cmd 無遺失事件，index extents 前後一致。
 - DiskANN 回報：QPS 3,438.65，平均延遲 4,586.61µs（p99.9 15,287µs），平均每 query 118.35 次 IO、30.87 hops，平均 IO 時間 4,041.68µs／query。
-- 轉換（`microbench/diskann_trace_to_mqsim.py`，輸出在 `<trace>/mqsim_replay/`）：
+- 轉換（`microbench/trace_replay/diskann_trace_to_mqsim.py`，輸出在 `<trace>/mqsim_replay/`）：
   - 位址換算：整碟 sector − 6,400,000（nvme0n1p3 起點 6,397,952＋dm-linear 偏移 2,048）＝LV sector，再用 62 個 filefrag extents 換成 index 檔內 offset。
   - 搜尋期間 index 範圍內的讀取 1,183,194 筆（另有 23,673 筆讀其他檔案，主要是載入 PQ；62 筆寫入；2 筆在搜尋窗外），全部有配對的完成事件。
   - **交叉核對完全吻合**：其中 282 筆 8KB、6 筆 12KB、1 筆 16KB 是 kernel 合併相鄰 4KB 的結果，換回 4KB 共 1,183,491 次，等於 DiskANN `trace_access.csv` 的筆數，而且每個 sector 的次數逐一相同。
@@ -2473,8 +2473,8 @@ All measured repeats and simulation seeds retained. Ratios are descriptive, not 
 ### MQSim 修改與重播工具
 
 - `MQSIM_REQUEST_LOG=<path>`（`src/host/IO_Flow_Base.cpp`）：設定時每完成一筆請求寫一行「arrival enqueue complete start_lba lba_count type」；未設定時不影響任何行為。
-- `microbench/run_mqsim_trace_replay.sh <replay_dir> [config]`：用 `ssdconfig_t500_calibrated.xml` 建立 trace-based workload（Initial_Occupancy 75%，與校準一致；trace 模式會優先預寫被讀到的 LPA），執行並比較。
-- `microbench/compare_trace_replay.py`：依到達時間逐筆配對，比較延遲分布、逐筆相關、10 ms 時間序列的平均延遲與在途數；已用「真機資料當模擬結果」自我測試，各項完全相同。
+- `microbench/trace_replay/run_mqsim_trace_replay.sh <replay_dir> [config]`：用 `ssdconfig_t500_calibrated.xml` 建立 trace-based workload（Initial_Occupancy 75%，與校準一致；trace 模式會優先預寫被讀到的 LPA），執行並比較。
+- `microbench/trace_replay/compare_trace_replay.py`：依到達時間逐筆配對，比較延遲分布、逐筆相關、10 ms 時間序列的平均延遲與在途數；已用「真機資料當模擬結果」自我測試，各項完全相同。
 - **MQSim trace 模式 bug（2026-11-15 修正）**：第一次重播在預寫階段以「Unhandled address distribution type in FTL's preconditioning function」結束。`IO_Flow_Trace_Based::Get_statistics` 從未設定 `Address_distribution_type`、`generate_aligned_addresses`、`alignment_value`、hot/cold 比例與 `Working_set_ratio`（未初始化記憶體），FTL 預寫卻會讀這些欄位。修正：trace 統計明確設為 RANDOM_UNIFORM、不對齊、無 hot/cold、working set 比例 1（只影響預寫時穩態有效頁分布的估計；trace 位址照原樣使用）。合成負載路徑不受影響。失敗的那次執行已移出結果目錄。
 
 ### 開放迴路重播結果（run_ssdconfig_t500_calibrated，2026-11-15）
@@ -2511,15 +2511,15 @@ MQSim 新增 `IO_Flow_Closed_Loop_Replay`（`src/host/IO_Flow_Closed_Loop_Replay
 - 只有裝置時間由模擬決定；主機端時間（送出路徑、完成路徑、搜尋計算、換 query）都取自真機。
 - `MQSIM_ROUND_LOG=<path>` 記錄每輪的開始、最後完成、結束時間。
 
-排程產生（`microbench/build_closed_loop_schedule.py`，輸出 `<trace>/closed_loop/`）：
+排程產生（`microbench/trace_replay/build_closed_loop_schedule.py`，輸出 `<trace>/closed_loop/`）：
 - 每一輪（query × iteration）以「相同 4KB sector、送出時間落在該輪 read_begin～read_end 內」對應 block 請求；1,183,194 筆 block 請求全部對應（kernel 合併造成的沿用 297 次＝282＋2×6＋3，與合併數完全一致），共 308,703 輪、16 個 worker。
 - 真機每輪：read_begin→read_end 平均 131.4µs（p50 116.1、p99 480.0）；送出前主機時間平均 5.2µs（p99 8.9）；最後完成到 DiskANN 收到平均 2.7µs（p99 8.0）。150 輪的 post 因時鐘些微負值被設為 0。
 - 依構造，「輪開始＋offset＋真機延遲＋post」恰好等於真機的 read_end，所以排程在真機延遲下會完全重現真機時間軸。
-- `microbench/compare_closed_loop.py` 自我測試（真機資料當模擬結果）：各項完全相同；由輪紀錄算出的 query 速率 3,438.8／s，與 DiskANN 回報 QPS 3,438.65 一致。
+- `microbench/trace_replay/compare_closed_loop.py` 自我測試（真機資料當模擬結果）：各項完全相同；由輪紀錄算出的 query 速率 3,438.8／s，與 DiskANN 回報 QPS 3,438.65 一致。
 
 假設與限制：DiskANN 每輪等 W 個讀取全部回來才處理，搜尋路徑與 SSD 快慢無關；主機時間視為固定（不模擬 CPU 競爭、I/O stack 變動）；W 個讀取的送出間隔沿用實測值。
 
-執行：`microbench/run_mqsim_closed_loop.sh <trace_dir> [config]`；`ROUNDS_PER_WORKER=N` 只重播每個 worker 的前 N 輪做煙霧測試。
+執行：`microbench/trace_replay/run_mqsim_closed_loop.sh <trace_dir> [config]`；`ROUNDS_PER_WORKER=N` 只重播每個 worker 的前 N 輪做煙霧測試。
 
 
 ## 閉迴路啟動崩潰：編譯相依修正（2026-11-15）
@@ -2587,13 +2587,13 @@ run_t500_closed_loop_20261115_045636在約0.07秒以signal11退出，沒有完�
 5. Batch barrier受一輪最慢請求影響，尾端低估可能影響分批策略與pipeline填滿的結論。尚不能僅由這些分位數辨識ECC、韌體背景工作或host完成路徑；不添加任意隨機延遲去配p99。
 6. 先前前200輪的巨大差距在完整重播平均上沒有延續；分段圖提供啟動與後續變化的觀察，但不因此排除後段的局部偏差。下一步依相同輪／query與batch大小比較最慢讀取、完成跨度及窗口變化，再決定是否需要新機制。
 
-來源：[comparison.json](results/diskann_trace_20261114T202209Z_T16_W4_L100/closed_loop/run_t500_full_20261115_050240/comparison.json)。圖表保留PNG／SVG；可用 `python3 -B microbench/plot_closed_loop_record.py <trace_dir> <run_dir>` 從既有資料重新產圖。
+來源：[comparison.json](results/diskann_trace_20261114T202209Z_T16_W4_L100/closed_loop/run_t500_full_20261115_050240/comparison.json)。圖表保留PNG／SVG；可用 `python3 -B microbench/plots/plot_closed_loop_record.py <trace_dir> <run_dir>` 從既有資料重新產圖。
 <!-- full-closed-loop-t500-20261115:end -->
 
 ### 舊結果是否受 header 相依問題影響（2026-11-15 檢查）
 
 原 Makefile 不追蹤 header，增量編譯可能混用舊物件。檢查各批次的 binary 來源：
-- 所有 `mqsim_calibration_*`／`mqsim_regress_*` 批次都由 `run_mqsim_calibration.sh --run` 執行，該腳本用 `make -B` 強制全部重編，並比對原始碼 hash，不受影響。
+- 所有 `mqsim_calibration_*`／`mqsim_regress_*` 批次都由 `calibration/run_mqsim_calibration.sh --run` 執行，該腳本用 `make -B` 強制全部重編，並比對原始碼 hash，不受影響。
 - 開放迴路重播（`mqsim_replay/run_ssdconfig_t500_calibrated`，04:29）：最後一次全部重編是 cmdfirst 批次（含 `Channel_Arbitration` 的 header 變更）；之後到重播前只改了 `IO_Flow_Base.cpp` 與 `IO_Flow_Trace_Based.cpp` 兩個 .cpp，沒有改 header，增量編譯不會混用，結果有效。
 - 受影響的只有加入 `Replay_Schedule_File`（改 `IO_Flow_Parameter_Set.h`）後的第一次閉迴路執行（`run_t500_closed_loop_20261115_045636`，signal 11），已由上節的 Makefile 修正處理。
 

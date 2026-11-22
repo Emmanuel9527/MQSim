@@ -2,8 +2,8 @@
 
 ```bash
 cd /home/emmanuel/projects/MQSim
-bash microbench/run_long_baseline.sh --check
-bash microbench/run_long_baseline.sh
+bash microbench/realssd/run_long_baseline.sh --check
+bash microbench/realssd/run_long_baseline.sh
 ```
 
 Defaults: existing SIFT100M index, first 32 GiB, direct 4 KiB random reads,
@@ -25,10 +25,10 @@ Configuration overrides (same method, not equivalent experiments):
 
 ```bash
 # One-hour-focused sweep: ~66 min; sparse QDs, not the full default curve.
-QDS="1 8 32 128" bash microbench/run_long_baseline.sh
+QDS="1 8 32 128" bash microbench/realssd/run_long_baseline.sh
 
 # Another independent day/time: different randomization seed.
-SEED=20261113 bash microbench/run_long_baseline.sh
+SEED=20261113 bash microbench/realssd/run_long_baseline.sh
 ```
 
 Analysis creates qd_curves.png/svg, report.md, per_run.csv, by_qd.csv,

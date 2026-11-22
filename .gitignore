@@ -24,3 +24,12 @@ fio*.json
 .idea/
 *.swp
 .DS_Store
+
+# Local-only notes and reports (not for the public repo)
+/microbench/reports/2026-11-16_*.md
+/microbench/reports/2026-11-22_ssd_pq_footprint.md
+/microbench/reports/figures/ladder_*.png
+/microbench/research_journal.md
+/microbench/ladder/ladder_jobs.py
+/microbench/plots/plot_ladder.py
+/microbench/ladder/ladder_sim.py
