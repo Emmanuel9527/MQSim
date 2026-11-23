@@ -13,12 +13,16 @@ Search variants:
   coexp=<unit>    co-located expansion: when a node is read, the other nodes in the same unit (sector = 10 slots or
                   page = 40 slots) are expanded as well at no extra tR (SSD-side: the page is already sensed).
                   coexp_filter: only co-located nodes whose host distance beats the current L-th candidate.
+  late_far=<x>    late decision inside a round (SSD side, when a read would start): each read not yet started is
+                  re-checked against x * the K-th candidate updated by the reads already completed (upper bound).
+  skip_far=<x>    host distance termination: a taken candidate with host distance > x * K-th candidate is not read
+                  (and not re-ranked); combinable with coexp.
   ssd=<k>,<spec>  first k rounds run inside the SSD with a coarse code <spec> (navigation by coarse distance only),
                   then the host continues with its own distances (its list rebuilt from everything the SSD expanded).
 Metrics per query: rounds (host-visible + SSD rounds), reads (nodes requested), sensed units (distinct pages: tR),
 expanded nodes, recall@K.
 """
-import argparse, bisect, json, time
+import argparse, bisect, json, os, time
 from pathlib import Path
 import numpy as np
 import coarse_quant as cq
@@ -27,6 +31,11 @@ IDX = '/home/emmanuel/projects/data/sift100m_diskann_indexes/sift100m_l2_R64_L10
 O2N = '/home/emmanuel/projects/data/sift100m_diskann_indexes/sift100m_l2_R64_L100_pq0_block_shuffle_disk.index_block_shuffle_old_to_new.bin'
 GT = '/home/emmanuel/projects/data/sift100m/idx_100M.bin'
 NODE, NPS, SECTOR = 388, 10, 4096
+# GRAPHSIM_INDEX=server: the server A1.2 index (the one behind all server traces; vanilla layout) and its real 31-byte
+# host PQ ('server' code). validate_graphsim_server.py shows this search reproduces the server run read for read.
+SRV_PREFIX = '/home/emmanuel/projects/data/sift100m_A1.2_server/disk_index_SIFT100M_base100M_R64_L100_A1.2'
+SERVER = os.environ.get('GRAPHSIM_INDEX', '') == 'server'
+if SERVER: IDX = SRV_PREFIX + '_disk.index'
 
 
 class Graph:
@@ -55,6 +64,24 @@ class Codes:
         return self.qz.dist(q, np.arange(len(ids)))
 
 
+class ServerCodes:
+    """The server's own DiskANN PQ (pq_pivots + pq_compressed, 31 B per point); same interface as Codes."""
+
+    def __init__(self, prefix=SRV_PREFIX):
+        import verify_server_index as vs
+        self.piv, self.cen, self.chunk, self.codes = vs.load_pq(prefix)
+        self.m = len(self.chunk) - 1; self._key = None
+
+    def dists(self, q, ids):
+        k = q.tobytes()
+        if k != self._key:
+            qc = q.astype(np.float32) - self.cen
+            self._tab = np.stack([((qc[self.chunk[j]:self.chunk[j + 1]] - self.piv[:, self.chunk[j]:self.chunk[j + 1]]) ** 2)
+                                  .sum(1) for j in range(self.m)]); self._key = k
+        cd = np.asarray(self.codes[np.asarray(ids, dtype=np.int64)])
+        return self._tab[np.arange(self.m)[None, :], cd].sum(1)
+
+
 class CL:
     def __init__(self, L):
         self.L, self.k, self.e = L, [], []
@@ -80,12 +107,12 @@ class CL:
 
 
 def search(g, base, q, host, W, L, unit_of, coexp=None, coexp_filter=False, ssd=None, page_nodes=40, slot=None,
-           filt=None, sector_of=None, filter_k=0):
+           filt=None, sector_of=None, filter_k=0, skip_far=0.0, K=10, late=None):
     """Returns dict of counters and the expanded set with exact distances."""
     visited = {g.medoid}; expanded = {}
     cl = CL(L)
     cl.insert(float(host.dists(q, np.array([g.medoid]))[0]), g.medoid)
-    rounds = ssd_rounds = reads = 0; sensed = set(); sched = []
+    rounds = ssd_rounds = reads = skipped = late_skipped = 0; sensed = set(); sched = []
 
     def expand(i, cl, dist_codes):
         vec, nb = g.node(i)
@@ -115,8 +142,16 @@ def search(g, base, q, host, W, L, unit_of, coexp=None, coexp_filter=False, ssd=
         if not F:
             if all(cl.e): break
             continue
-        rounds += 1; reads += len(F); n0 = len(expanded)
-        for i in F:
+        if skip_far:
+            # host distance termination (= analyze_avoidable_reads far:x, Adaptive Beam Search): a taken candidate
+            # whose host distance exceeds x * the K-th candidate (both at round start) is dropped without a read
+            kth = cl.k[min(K, len(cl.k)) - 1][0]
+            dF = {jj: dd for dd, jj in cl.k if jj in F}
+            n = len(F); F = [i for i in F if dF[i] <= skip_far * kth]; skipped += n - len(F)
+            if not F: continue
+        rounds += 1; n0 = len(expanded)
+
+        def read_one(i):
             u = unit_of(i); sensed.add(u)
             expand(i, cl, host)
             if coexp and filt is not None:
@@ -140,8 +175,28 @@ def search(g, base, q, host, W, L, unit_of, coexp=None, coexp_filter=False, ssd=
                     # mark j expanded in the list if it is there
                     for t, (d, jj) in enumerate(cl.k):
                         if jj == j: cl.e[t] = True; break
+
+        if late and len(F) > late[1]:
+            # late decision (SSD-side, at the moment a read would start on its die): reads of the round complete one
+            # by one; at most `commit` are in flight, and each further read is decided only when one in-flight read
+            # has completed, with the K-th candidate as updated by every completed read (host-quality distances:
+            # an information upper bound). A candidate beyond x * that K-th is dropped without a read.
+            x, commit, order, lrng = late
+            dF = {jj: dd for dd, jj in cl.k if jj in F}
+            seq = sorted(F, key=dF.get) if order == 'near' else [F[t] for t in lrng.permutation(len(F))]
+            started, ptr = [], 0
+            for i in seq:
+                if len(started) >= commit:
+                    while ptr < len(started) - commit + 1: read_one(started[ptr]); ptr += 1
+                    if dF[i] > x * cl.k[min(K, len(cl.k)) - 1][0]: late_skipped += 1; continue
+                started.append(i)
+            while ptr < len(started): read_one(started[ptr]); ptr += 1
+            F = started
+        else:
+            for i in F: read_one(i)
+        reads += len(F)
         if sector_of: sched.append({'F': [sector_of(i) for i in F], 'exp': len(expanded) - n0})
-    return dict(rounds=rounds, ssd_rounds=ssd_rounds, reads=reads, sensed=len(sensed), expanded=len(expanded),
+    return dict(rounds=rounds, ssd_rounds=ssd_rounds, reads=reads, skipped=skipped, late_skipped=late_skipped, sensed=len(sensed), expanded=len(expanded),
                 result=sorted(expanded, key=expanded.get), sched=sched)
 
 
@@ -156,12 +211,16 @@ def main():
     ap.add_argument('--o2n', type=Path, default=None, help='custom layout: old_to_new slot map (header n,1)')
     ap.add_argument('--coexp', choices=['none', 'sector', 'page'], default='none')
     ap.add_argument('--coexp_filter', action='store_true')
-    ap.add_argument('--host', default='PQ32x8')
+    ap.add_argument('--host', default='server' if SERVER else 'PQ32x8', help="'server' = the server's 31-B DiskANN PQ")
     ap.add_argument('--ssd_rounds', type=int, default=0)
     ap.add_argument('--ssd_spec', default='PQ8x8')
     ap.add_argument('--cbdir', type=Path, default=Path('results/autonomous_20261122/codebooks'))
     ap.add_argument('--filter_spec', default='', help='SSD-side filter code for co-located nodes (batch, vs tail)')
     ap.add_argument('--filter_k', type=int, default=0, help='filter threshold = k-th candidate (0 = L-th, the tail)')
+    ap.add_argument('--skip_far', type=float, default=0.0, help='>0: host drops a taken candidate whose host distance > x * K-th candidate (no read)')
+    ap.add_argument('--late_far', type=float, default=0.0, help='>0: late (SSD-side) decision within a round, see search()')
+    ap.add_argument('--late_commit', type=int, default=1, help='late decision: reads in flight at once (1 = fully serialized upper bound)')
+    ap.add_argument('--late_order', choices=['random', 'near'], default='random', help='late decision: completion order within a round')
     ap.add_argument('--dump_sched', type=Path, default=None, help='write a ladder_sim schedule (sector = slot // 10)')
     ap.add_argument('--out', type=Path, required=True)
     a = ap.parse_args()
@@ -184,8 +243,9 @@ def main():
         elif hasattr(qz, 'P'): np.savez(f, c=qz.c, P=qz.P)
         return qz
 
-    host = Codes(trained(a.host), base)
-    ssd = (a.ssd_rounds, Codes(trained(a.ssd_spec), base)) if a.ssd_rounds else None
+    codes = lambda spec: ServerCodes() if spec == 'server' else Codes(trained(spec), base)
+    host = codes(a.host)
+    ssd = (a.ssd_rounds, codes(a.ssd_spec)) if a.ssd_rounds else None
     if a.layout == 'default':
         slot = lambda i: i
     elif a.layout == 'custom':
@@ -193,6 +253,7 @@ def main():
         n2o_c = np.full(int(o2n_c.max()) + 1, 0xffffffff, dtype=np.uint32); n2o_c[o2n_c] = np.arange(len(o2n_c), dtype=np.uint32)
         slot = lambda i: int(o2n_c[i])
     else:
+        assert not SERVER, 'the block-shuffle map belongs to the local pq0 graph; use --layout custom --o2n for the server'
         o2n = np.memmap(O2N, dtype=np.uint32, mode='r', offset=8)
         n2o = None
         slot = lambda i: int(o2n[i])
@@ -209,12 +270,13 @@ def main():
         else:
             n2o = np.memmap(O2N.replace('old_to_new', 'new_to_old'), dtype=np.uint32, mode='r', offset=8)
             coexp = lambda i: [int(n2o[s]) for s in range((slot(i) // U) * U, (slot(i) // U) * U + U) if s < g.n]
-    filt = Codes(trained(a.filter_spec), base) if a.filter_spec else None
+    filt = codes(a.filter_spec) if a.filter_spec else None
     sector_of = (lambda i: slot(i) // NPS) if a.dump_sched else None
+    late = (a.late_far, a.late_commit, a.late_order, np.random.default_rng(7)) if a.late_far else None
     rows = []; scheds = []; t0 = time.time()
     for qi in range(a.q0, a.q0 + a.queries):
         r = search(g, base, Q[qi], host, a.W, a.L, unit_of, coexp, a.coexp_filter, ssd, filt=filt, sector_of=sector_of,
-                   filter_k=a.filter_k)
+                   filter_k=a.filter_k, skip_far=a.skip_far, K=a.K, late=late)
         res = r.pop('result'); scheds.append(r.pop('sched'))
         r['recall'] = len(set(res[:a.K]) & set(gt[qi, :a.K].tolist())) / a.K
         rows.append(r)

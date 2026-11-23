@@ -1,6 +1,6 @@
 # DiskANN × SSD 內部時間利用研究紀錄
 
-校準過程與模型細節見 [mqsim_calibration.md](mqsim_calibration.md)（已大致完成，之後只有再校準時才更新）。本檔記錄 2026-11-15 起的研究實驗。
+校準過程與模型細節見 [mqsim_calibration.md](../mqsim_calibration.md)（已大致完成，之後只有再校準時才更新）。本檔記錄 2026-11-15 起的研究實驗。
 
 ## 研究目標
 
@@ -9,22 +9,22 @@
 ## 圖表速覽
 
 看紀錄時先看這幾張圖，細節在各節：
-- [pipeline 示意](figures/pipeline_schematic.png)：一輪 W 筆讀取裡只要一筆撞上忙碌的 plane，整輪就被拖長（低負載的主要浪費）。
-- [模擬實際截取](figures/pipeline_real_T16W4_w0_r42-45.png)：T16 W4 worker 0，撞車的輪 133–152µs，沒撞車的 85µs；channel 大多閒置。
-- [平行單位時間分解 T16 W4](figures/slack_T16W4.png)：plane 約 70% 完全空閒。
-- [候選架構 pipeline](figures/architecture_pipelines.png)：原始、主機提示、SSD 預讀 d=1/d=2、整個搬進 SSD 的時間線比較（理想化）。
-- [barrier vs 非同步](figures/barrier_vs_async.png)：SSD 內非同步走訪不需要 plane 內計算；計算位置只影響每 hop 約 2µs，tR 才是相依鏈的下限。
-- [beam width 取捨](figures/beamwidth_tradeoff.png)：W 越大 hop 越少、延遲下限越低，但讀取數增加、吞吐上限下降；（外插部分已被 P4 實測推翻）
-- [MQSim 校準總覽](figures/calibration_overview.png)：fio QD 掃描差 0–8%（擬合用）；DiskANN 閉迴路 T8／T16 W4 QPS 差 ≤0.4%、每輪平均 +0.1%，但 p99／p99.9 只有真機一半；T32 以上模型快 6–11%。數字出自 mqsim_calibration.md（`plots/plot_calibration_overview.py`）。
-- [N2 時間對齊](figures/sim_time_alignment.png)：一輪＝真機量的主機時間＋模擬的 SSD 時間，接在同一虛擬時鐘上。
-- [P1 前期／後期](figures/prediction_by_round_sift100m.png)：舊候選比例前 5 輪約 0%，後期約 80%，平均 56%／42% 是兩段混合。
-- [P1 可預測性 SIFT100M W4](figures/prediction_sift100m_W4.png)：下一輪讀取＝主機已知的舊候選（56%）＋本輪新鄰居（44%）；兩邊合作才能 100%；SSD 沒有 PQ 幾乎無法預測。
-- [P4 策略掃描 SIFT100M](figures/policy_sweep_sift100m.png)：hop 在約 8.5 到底；一單位一筆只在 W≥64 有作用；sector 展開在預設擺放下收益小。
-- 主機提名、SSD 挑選（[原始](figures/nominate_choose_a.png) / [提名挑選](figures/nominate_choose_b.png)）：主機提名前 2W 名，SSD 避開忙碌 plane 改讀，其餘低優先權預讀（設計示意，N 系列實驗待做）。
-- [N1 提名／挑選功能代價](figures/nominate_sweep_sift100m.png)（[精簡版：只有忙碌輪與 hop](figures/nominate_sweep_brief_sift100m.png)；[報告版：只有忙碌輪](figures/nominate_busy_sift100m.png)）：p＝0.3、提名 2W 時，有忙碌讀取的輪 73%→11%（W4），hop 只多 1.7%，recall 不降；預讀命中約一半讀取。
-- N2 時序模擬結果（[驗證](figures/sim_sweep_sift100m_validation.png) / [QPS](figures/sim_sweep_sift100m_qps.png) / [延遲](figures/sim_sweep_sift100m_latency.png)）：模擬器與 MQSim 差 ≤0.6%；低負載（T8／T16 W4）避開 2W：QPS +20–26%，再加預讀 +38–43%，recall 不降。
-- [N2 開快取前後](figures/sim_sweep_cache_sift100m.png)：開節點快取後，避開的收益幾乎不變（W4 +20／+26%）；只預讀在 W4 少 3–4 點，在 W8 從 +23／+41% 掉到 +14／+11%；避開＋預讀在 W4 仍有 +34／+38%。
-- [節點快取：真機對照模擬](figures/cache_sweep_t500.png)：只快取 1 千個節點（約 400 KB），真機 QPS 就 +6–7%（W4）、+21–25%（W8）；100 萬節點 +14–15%／+39–45%。熱點是高負載的主要瓶頸，之後的基準應該開快取。
+- [pipeline 示意](../figures/pipeline_schematic.png)：一輪 W 筆讀取裡只要一筆撞上忙碌的 plane，整輪就被拖長（低負載的主要浪費）。
+- [模擬實際截取](../figures/pipeline_real_T16W4_w0_r42-45.png)：T16 W4 worker 0，撞車的輪 133–152µs，沒撞車的 85µs；channel 大多閒置。
+- [平行單位時間分解 T16 W4](../figures/slack_T16W4.png)：plane 約 70% 完全空閒。
+- [候選架構 pipeline](../figures/architecture_pipelines.png)：原始、主機提示、SSD 預讀 d=1/d=2、整個搬進 SSD 的時間線比較（理想化）。
+- [barrier vs 非同步](../figures/barrier_vs_async.png)：SSD 內非同步走訪不需要 plane 內計算；計算位置只影響每 hop 約 2µs，tR 才是相依鏈的下限。
+- [beam width 取捨](../figures/beamwidth_tradeoff.png)：W 越大 hop 越少、延遲下限越低，但讀取數增加、吞吐上限下降；（外插部分已被 P4 實測推翻）
+- [MQSim 校準總覽](../figures/calibration_overview.png)：fio QD 掃描差 0–8%（擬合用）；DiskANN 閉迴路 T8／T16 W4 QPS 差 ≤0.4%、每輪平均 +0.1%，但 p99／p99.9 只有真機一半；T32 以上模型快 6–11%。數字出自 mqsim_calibration.md（`plots/plot_calibration_overview.py`）。
+- [N2 時間對齊](../figures/sim_time_alignment.png)：一輪＝真機量的主機時間＋模擬的 SSD 時間，接在同一虛擬時鐘上。
+- [P1 前期／後期](../figures/prediction_by_round_sift100m.png)：舊候選比例前 5 輪約 0%，後期約 80%，平均 56%／42% 是兩段混合。
+- [P1 可預測性 SIFT100M W4](../figures/prediction_sift100m_W4.png)：下一輪讀取＝主機已知的舊候選（56%）＋本輪新鄰居（44%）；兩邊合作才能 100%；SSD 沒有 PQ 幾乎無法預測。
+- [P4 策略掃描 SIFT100M](../figures/policy_sweep_sift100m.png)：hop 在約 8.5 到底；一單位一筆只在 W≥64 有作用；sector 展開在預設擺放下收益小。
+- 主機提名、SSD 挑選（[原始](../figures/nominate_choose_a.png) / [提名挑選](../figures/nominate_choose_b.png)）：主機提名前 2W 名，SSD 避開忙碌 plane 改讀，其餘低優先權預讀（設計示意，N 系列實驗待做）。
+- [N1 提名／挑選功能代價](../figures/nominate_sweep_sift100m.png)（[精簡版：只有忙碌輪與 hop](../figures/nominate_sweep_brief_sift100m.png)；[報告版：只有忙碌輪](../figures/nominate_busy_sift100m.png)）：p＝0.3、提名 2W 時，有忙碌讀取的輪 73%→11%（W4），hop 只多 1.7%，recall 不降；預讀命中約一半讀取。
+- N2 時序模擬結果（[驗證](../figures/sim_sweep_sift100m_validation.png) / [QPS](../figures/sim_sweep_sift100m_qps.png) / [延遲](../figures/sim_sweep_sift100m_latency.png)）：模擬器與 MQSim 差 ≤0.6%；低負載（T8／T16 W4）避開 2W：QPS +20–26%，再加預讀 +38–43%，recall 不降。
+- [N2 開快取前後](../figures/sim_sweep_cache_sift100m.png)：開節點快取後，避開的收益幾乎不變（W4 +20／+26%）；只預讀在 W4 少 3–4 點，在 W8 從 +23／+41% 掉到 +14／+11%；避開＋預讀在 W4 仍有 +34／+38%。
+- [節點快取：真機對照模擬](../figures/cache_sweep_t500.png)：只快取 1 千個節點（約 400 KB），真機 QPS 就 +6–7%（W4）、+21–25%（W8）；100 萬節點 +14–15%／+39–45%。熱點是高負載的主要瓶頸，之後的基準應該開快取。
 
 ## 方法
 
@@ -253,8 +253,8 @@ MQSim 新增 `MQSIM_TRANSACTION_LOG=<path>`（`NVM_PHY_ONFI_NVDDR2`）：每筆 
 | 每筆讀取在 TSU 排隊（等該單位空出來）平均 | 8.3µs | 16.7µs |
 | 資料讀出後等 channel 平均／p99 | 0.40 / 3.3µs | 0.42 / 3.7µs |
 
-![T16 W4 平行單位時間分解與同時讀取數](figures/slack_T16W4.png)
-*圖：T16 W4。左：96 個平行單位的時間分解，約 70% 完全空閒。右：同時在做 array read 的單位數，集中在 20–40 個。T8 W4 見 [slack_T8W4.png](figures/slack_T8W4.png)。*
+![T16 W4 平行單位時間分解與同時讀取數](../figures/slack_T16W4.png)
+*圖：T16 W4。左：96 個平行單位的時間分解，約 70% 完全空閒。右：同時在做 array read 的單位數，集中在 20–40 個。T8 W4 見 [slack_T8W4.png](../figures/slack_T8W4.png)。*
 
 ### 2. 每一輪的時間組成（模擬；平均每輪 3.83 筆讀取）
 
@@ -308,10 +308,10 @@ MQSim 新增 `MQSIM_TRANSACTION_LOG=<path>`（`NVM_PHY_ONFI_NVDDR2`）：每筆 
 ### Pipeline 示意圖（2026-11-16）
 產生方式：`microbench/plots/plot_pipeline_diagram.py`（`schematic` 或 `real <trace> <run> --worker W --rounds A B`）。
 
-![理想化 pipeline 示意](figures/pipeline_schematic.png)
+![理想化 pipeline 示意](../figures/pipeline_schematic.png)
 *圖：理想化示意，用 T16 W4 的平均值畫。第 0 輪 P3 撞上其他 worker 正在讀的 plane，排隊約 40µs，其他三筆早就回來了，整輪還是被最慢那筆拖長。第 1 輪沒撞車。channel 只有細細的傳輸。*
 
-![模擬實際截取 T16 W4 worker 0 第 42–45 輪](figures/pipeline_real_T16W4_w0_r42-45.png)
+![模擬實際截取 T16 W4 worker 0 第 42–45 輪](../figures/pipeline_real_T16W4_w0_r42-45.png)
 *圖：從 `run_slack` 的交易紀錄實際截取 worker 0 第 42–45 輪。第 42、43 輪各有一筆撞上其他 worker（淺灰）正在讀的 plane，在 TSU 排隊約 50µs 與 72µs（紅），整輪拉長到 133µs、152µs。第 44、45 輪沒撞車，85µs。截取視窗內每條 channel 使用率 16–27%。*
 
 ## 2026-11-16 討論：如何打破每輪的 batch barrier、還要調查什麼（計畫，未執行）
@@ -395,7 +395,7 @@ MQSim 新增 `MQSIM_TRANSACTION_LOG=<path>`（`NVM_PHY_ONFI_NVDDR2`）：每筆 
 
 所以 SSD 內預讀的價值取決於「往前兩輪」能預測多準，不只是下一輪。實驗要量 d=1、2 兩種提前輪數。
 
-![候選架構的 pipeline 示意](figures/architecture_pipelines.png)
+![候選架構的 pipeline 示意](../figures/architecture_pipelines.png)
 *圖：候選架構的理想化 pipeline（無撞車；主機時間取 T16 W4 平均；緩衝命中 15µs、SSD 內計算 3µs 為假設值）。由 `plots/plot_architecture_pipelines.py` 產生。*
 - (0) 原始：每輪約 105µs，含撞車實測約 151µs。
 - (1) 主機提示：提前量夠，但 **barrier 讓「部分命中」沒有用**，一輪 W 筆要全部命中才會變短；上一輪變快之後，下一輪提示的提前量也跟著縮短。
@@ -449,7 +449,7 @@ fio 均勻讀 jobs × block size 掃描，以及熱點/均勻讀的干擾實驗�
 
 使用者的問題：整輪全部預讀到很難。是否改成在 plane 裡直接算出下一個要讀誰，就不會被 tR 卡住？如果還是由控制器發命令，是不是很難打破 batch barrier？
 
-![barrier vs 非同步、計算位置與每 hop 時間](figures/barrier_vs_async.png)
+![barrier vs 非同步、計算位置與每 hop 時間](../figures/barrier_vs_async.png)
 *圖：理想化示意（`plots/plot_barrier_vs_async.py`），同一串讀取延遲。(a) SSD 內走訪但保留 barrier；(b) SSD 內非同步：任一筆回來就展開、補下一筆，同時間多完成約 12% 讀取；(c) 一個相依 hop 的時間：計算放在控制器約 75µs，放在 plane 內約 73µs。*
 
 判斷：
@@ -471,7 +471,7 @@ fio 均勻讀 jobs × block size 掃描，以及熱點/均勻讀的干擾實驗�
 
 使用者的想法：每輪從 96 個 plane 各讀出目前最有希望的 candidate；只要與 frontier 夠接近就展開，不一定嚴格沿著圖的邊。
 
-![beam width 的取捨](figures/beamwidth_tradeoff.png)
+![beam width 的取捨](../figures/beamwidth_tradeoff.png)
 *圖：`plots/plot_beamwidth_tradeoff.py`。實心為實測（W4/W8/W16），空心為外插。外插假設 hop ∝ W^−0.64、讀取數 ≈ 101＋4.2W，需實測。延遲下限＝hop × 75µs；QPS 上限＝96 單位 ÷ 75µs ÷ 每 query 讀取數。*
 
 **1. 「每輪讀 96 個」等於 W=96，是延遲最佳化的極端**（外插值）：
@@ -548,8 +548,8 @@ sector 內展開沿用既有的 `--use_sector_candidates`。
 
 ### P1：下一輪的讀取能預測多少？
 
-![SIFT100M W4 可預測性](figures/prediction_sift100m_W4.png)
-*圖：W4。橫軸是預讀筆數 k（W 的倍數），以 sector 計。W8 見 [prediction_sift100m_W8.png](figures/prediction_sift100m_W8.png)。*
+![SIFT100M W4 可預測性](../figures/prediction_sift100m_W4.png)
+*圖：W4。橫軸是預讀筆數 k（W 的倍數），以 sector 計。W8 見 [prediction_sift100m_W8.png](../figures/prediction_sift100m_W8.png)。*
 
 **怎麼讀這張圖**
 - 問題：DiskANN 每輪讀 W＝4 個節點。在第 r＋1 輪開始前，誰能先猜中這 4 個，讓 SSD 提早讀？
@@ -586,7 +586,7 @@ sector 內展開沿用既有的 `--use_sector_candidates`。
 
 上面的 56%／42% 是所有輪的平均。按輪次拆開後（`server_sweeps/analyze_prediction_by_round.py`，同一份 explog，重演 0 筆不符），前期和後期幾乎是兩種情況：
 
-![下一輪讀取的來源隨搜尋進度變化](figures/prediction_by_round_sift100m.png)
+![下一輪讀取的來源隨搜尋進度變化](../figures/prediction_by_round_sift100m.png)
 *圖：`plots/plot_prediction_by_round.py`。橫軸是第 r 輪，縱軸是第 r+1 輪讀取的組成。藍色＝舊候選（第 r 輪開始時已在主機候選佇列，主機提示 H 能涵蓋）；黃色＝第 r 輪剛讀出的新鄰居（主機不可能預知）。虛線是全程平均。只畫一半以上 query 會走到的輪。*
 
 **為什麼主機提示 k＝W 就到上限**：第 r+1 輪的每個節點，要嘛是舊候選，要嘛是第 r 輪插入的新鄰居。舊候選要進第 r+1 輪的前 W 名，在舊佇列裡一定排在 frontier 之後的前 W 個（第 W+1～2W 名），因為插入新鄰居只會把舊候選往後擠。所以 H 提示第 W+1～2W 名就涵蓋全部舊候選，k 再大也不會更高。實測也吻合：舊候選比例（節點計）＝H 涵蓋率（sector 計）＝55.8%／41.7%。
@@ -609,7 +609,7 @@ sector 內展開沿用既有的 `--use_sector_candidates`。
 
 ### P4：beam width 與挑選策略
 
-![SIFT100M 策略掃描](figures/policy_sweep_sift100m.png)
+![SIFT100M 策略掃描](../figures/policy_sweep_sift100m.png)
 *圖：hop、讀取數、recall 為實測；(d) 是由 hop 與讀取數推算的延遲下限（hop×75µs）與 QPS 上限（96 單位÷75µs÷讀取數），不含排隊與主機時間。*
 
 **怎麼讀這張圖**
@@ -636,7 +636,7 @@ sector 內展開沿用既有的 `--use_sector_candidates`。
 | 32 | 9.9／240／98.11 | 10.7／245／98.15 | 9.4／221／98.12 |
 | 96 | 8.5／508／98.94 | 10.2／370／98.59 | 7.8／459／98.90 |
 
-1. **hop 在約 8.5 就到底**，之前的外插（W96 約 3.9 hop）是錯的。L＝100 的候選佇列限制了每輪能展開的節點，[beamwidth_tradeoff.png](figures/beamwidth_tradeoff.png) 中的外插部分作廢。
+1. **hop 在約 8.5 就到底**，之前的外插（W96 約 3.9 hop）是錯的。L＝100 的候選佇列限制了每輪能展開的節點，[beamwidth_tradeoff.png](../figures/beamwidth_tradeoff.png) 中的外插部分作廢。
    - W96 的延遲下限約 0.64ms（W4 為 2.3ms，約 3.6 倍），讀取數約 4.3 倍。
    - recall 隨 W 上升（97.24 → 98.94）。
 2. **一單位一筆在 W≤16 幾乎沒有作用**：同一個 query 的 frontier 很少自己撞同一個 plane。
@@ -713,9 +713,9 @@ sector 內展開沿用既有的 `--use_sector_candidates`。
 
 ## 2026-11-16 實驗設計：「主機提名、SSD 挑選」的潛在收益（N 系列，未執行）
 
-![原始：整輪等忙碌 plane](figures/nominate_choose_a.png)
+![原始：整輪等忙碌 plane](../figures/nominate_choose_a.png)
 
-![主機提名、SSD 挑選](figures/nominate_choose_b.png)
+![主機提名、SSD 挑選](../figures/nominate_choose_b.png)
 *圖：理想化示意（`plots/plot_nominate_choose.py`，兩張圖時間軸相同可直接對照）。上圖原始：#3 落在被其他 query 占用的 plane，整輪等它排隊。下圖主機提名前 2W 名，SSD 避開忙碌 plane 改讀 #5，#3 等 plane 空出後低優先權預讀。代價是 #5 排名較後。*
 
 **要回答的兩件事**：
@@ -777,13 +777,13 @@ DiskANN_cpp 新增參數（預設關閉）：`--frontier_nominate k`、`--fronti
 
 設定：伺服器，DiskANN_cpp c49589d，L100 K10 T16，不快取節點，每組 10,000 query，預讀緩衝每 query 256 sector。T16 只是用來平行跑完，不影響結果：忙碌與否由固定 hash 依機率 p 決定，與其他 query 無關，所以 hop、recall、忙碌輪比例與 T 無關。p＝0.3 約對應 T16 W4 量到的 plane 使用率（array read 約 30%）。
 
-![N1 提名／挑選的功能代價](figures/nominate_sweep_sift100m.png)
+![N1 提名／挑選的功能代價](../figures/nominate_sweep_sift100m.png)
 *圖：`plots/plot_nominate_sweep.py`。上排 W4、下排 W8。橫軸是單位忙碌機率 p，線是提名數 k（最淺＝k＝W，等於原始）。*
 
-![N1 精簡版：收益（忙碌輪）與代價（hop）](figures/nominate_sweep_brief_sift100m.png)
+![N1 精簡版：收益（忙碌輪）與代價（hop）](../figures/nominate_sweep_brief_sift100m.png)
 *圖：精簡版（`plots/plot_nominate_sweep.py <dir> --brief`），只留前兩欄，報告用：左欄是收益（有讀取落在忙碌單位的輪），右欄是代價（hop 增加）。recall 不降、預讀命中見上方完整版。*
 
-![N1 報告版：只看忙碌輪](figures/nominate_busy_sift100m.png)
+![N1 報告版：只看忙碌輪](../figures/nominate_busy_sift100m.png)
 *圖：報告版（`plots/plot_nominate_busy.py <dir> <out>`），W4、W8 橫向並排，只畫有讀取落在忙碌單位的輪。灰色直條是 p＝0.3（約 T16 W4 的 plane 使用率），標出原始與 2W 在該處的值（73%→11%、87%→15%）。原始與 2W 的線較粗。*
 
 **怎麼讀這張圖**
@@ -892,7 +892,7 @@ SSD 從 k 個提名中挑 W 個不忙的；不忙的不足 W 個時，只能照�
 
 **時間怎麼和真機對齊**
 
-![N2 一輪的時間組成](figures/sim_time_alignment.png)
+![N2 一輪的時間組成](../figures/sim_time_alignment.png)
 *圖：`plots/plot_sim_time_alignment.py`，寬度按 T16 W4 平均值的比例。黃色是真機量到的主機時間（host profile），藍色是模擬器算的 SSD 時間，兩者接在同一個虛擬時鐘上，和 MQSim 閉迴路重播的做法相同。*
 
 - 主機段（計算 gap、送出 pre、收尾 post）不受 SSD 快慢影響，直接取真機 trace 量到的值。每種 (T, W) 各一份 profile（`configs/host_profiles/T*_W*.txt`，`trace_replay/make_host_profile.py` 產生），gap 每輪從量到的分布中抽樣。
@@ -913,11 +913,11 @@ SSD 從 k 個提名中挑 W 個不忙的；不忙的不足 W 個時，只能照�
 
 設定：伺服器，DiskANN_cpp 044efb7、MQSim fb04172。SIFT100M R64 L100 K10，不快取節點，10,000 query，seed 1，模擬時間。
 
-![N2 (a) 驗證：原始策略 QPS](figures/sim_sweep_sift100m_validation.png)
+![N2 (a) 驗證：原始策略 QPS](../figures/sim_sweep_sift100m_validation.png)
 
-![N2 (b) 各策略 QPS 相對原始](figures/sim_sweep_sift100m_qps.png)
+![N2 (b) 各策略 QPS 相對原始](../figures/sim_sweep_sift100m_qps.png)
 
-![N2 (c) 各策略平均延遲降低幅度](figures/sim_sweep_sift100m_latency.png)
+![N2 (c) 各策略平均延遲降低幅度](../figures/sim_sweep_sift100m_latency.png)
 *圖：`plots/plot_sim_sweep.py <dir> <out_prefix>`，拆成三張，設定順序與顏色相同。(a) 原始策略的 QPS：真機（灰）、MQSim 閉迴路（藍）、本模擬器（橘），標示相對 MQSim 的差。(b) 各策略的 QPS 相對原始；(c) 平均 query 延遲降低幅度（正值＝變快，例如 30 表示延遲降 30%）。淺灰底色是低負載（W4）。*
 
 **怎麼讀這張圖**
@@ -1021,11 +1021,11 @@ SSD 從 k 個提名中挑 W 個不忙的；不忙的不足 W 個時，只能照�
 
 ## 2026-11-16 節點快取在真機上的效果（diskann_cache_sweep_20261116）
 
-**為什麼做**：自主研究報告（[reports/2026-11-16_pipeline_ladder_e28.md](reports/2026-11-16_pipeline_ladder_e28.md) 第 2 節）用模擬發現，高負載下「預讀」的收益大部分其實是熱點 sector 被快取的效果，並預測只要很小的快取就有明顯收益。這一節用真機驗證。
+**為什麼做**：自主研究報告（[reports/2026-11-16_pipeline_ladder_e28.md](2026-11-16_pipeline_ladder_e28.md) 第 2 節）用模擬發現，高負載下「預讀」的收益大部分其實是熱點 sector 被快取的效果，並預測只要很小的快取就有明顯收益。這一節用真機驗證。
 
 **設定**：伺服器 T500，`server_sweeps/diskann_cache_sweep.sh`，DiskANN_cpp 044efb7。原始 `search_disk_index`，不抓 trace，SIFT100M R64、L100、K10、10,000 query。`num_nodes_to_cache` ＝ 0／1 千／1 萬／10 萬／100 萬，每點跑 2 次。快取內容是從 medoid 出發的 BFS 層（log 顯示第 2 層 64 個、第 3 層 4,063 個節點）。
 
-![節點快取：真機對照模擬](figures/cache_sweep_t500.png)
+![節點快取：真機對照模擬](../figures/cache_sweep_t500.png)
 *圖：`plots/plot_cache_sweep.py results/diskann_cache_sweep_20261116 results/autonomous_20261116 figures/cache_sweep_t500.png`。藍線是真機（兩次平均），橘色虛線是階梯模擬器的預測。模擬的快取以 sector 為單位、依其他 query 的讀取頻率挑選，以「10 個節點＝1 個 sector」對應到橫軸，所以兩者的快取內容不完全相同。*
 
 | (T, W) | 不開快取 QPS | 1 千 | 1 萬 | 10 萬 | 100 萬 |
@@ -1128,7 +1128,7 @@ SSD 從 k 個提名中挑 W 個不忙的；不忙的不足 W 個時，只能照�
 
 **設定**：伺服器，`CACHE_NODES=100000 PROFILES=microbench/configs/host_profiles_C100000 SEEDS="1 2 3"`，T8／T16 W4、T32／T48 W8 × 原始、避開 2W、避開＋短等待 35µs、只預讀（hint2_pf4k）、避開＋預讀（avoid2_pf4k），10,000 query。模擬器修改與驗證見上一節。
 
-![N2 開快取前後](figures/sim_sweep_cache_sift100m.png)
+![N2 開快取前後](../figures/sim_sweep_cache_sift100m.png)
 *圖：`plots/plot_sim_sweep_cache.py results/diskann_sim_sweep_20261115T204653Z results/diskann_sim_sweep_C100000_20261118 figures/sim_sweep_cache_sift100m.png`。每個長條都是相對同一條件（同快取設定）的原始策略。藍：不開快取（11/15，種子 1）；橘：快取 10 萬（3 個種子平均）。*
 
 **原始策略**（3 個種子）：T8／T16 W4 QPS 2,212／3,745，對真機開快取的 trace（2,242／3,860）−1.3%／−3.0%；T32／T48 W8 6,642／7,872，對真機 +4.6%／+10.1%。
@@ -1158,7 +1158,7 @@ SSD 從 k 個提名中挑 W 個不忙的；不忙的不足 W 個時，只能照�
 
 更正：T16 W4 channel 閒置是 **79.7%**（資料傳送 17.4%＋指令 3.0%），不是 83%；83% 是只扣掉資料傳送的值。T8 W4 為 87.9%。
 
-![原始 DiskANN 下 SSD 內部時間分解](figures/ssd_idle_breakdown.png)
+![原始 DiskANN 下 SSD 內部時間分解](../figures/ssd_idle_breakdown.png)
 *圖：(a) plane 時間分解，T16 W4 有 69.2% 完全空閒，「有工作卻閒著」只有 0.05%。(b) channel 平均閒置 79.7%（T16）／87.9%（T8）。(c) 每輪關鍵路徑：T16 每輪約 151µs，其中最慢那筆的排隊約 50µs，輪間主機計算約 19µs。*
 
 空閒的原因：每個 thread 同時只有 W 筆讀取在途，要等整輪回來、主機算完才送下一輪，所以 96 個單位平均只有 17–28 個在讀。排隊（等 plane 空出來）不會造成空閒，它和空閒同時存在：讀取隨機撞到正在讀的 plane，整輪被最慢那筆拖住。
@@ -1167,7 +1167,7 @@ SSD 從 k 個提名中挑 W 個不忙的；不忙的不足 W 個時，只能照�
 
 資料同「2026-11-15 負載掃描（真機）」的表（不開 node cache）。畫圖：`plots/plot_load_scaling.py figures/load_scaling_t500.png`（數值寫在腳本內）。
 
-![T500 負載掃描](figures/load_scaling_t500.png)
+![T500 負載掃描](../figures/load_scaling_t500.png)
 *圖：橫軸是平均在途讀取。在途超過約 100 筆後 IOPS 停在 64–68 萬，QPS 不再增加（W16 反而下降，因為每 query 多讀 25%），平均延遲隨在途數近乎線性上升（Little's law）。*
 
 ## 2026-11-18 MQSim 閉迴路重播：開快取 trace，四組負載
@@ -1194,13 +1194,13 @@ SSD 從 k 個提名中挑 W 個不忙的；不忙的不足 W 個時，只能照�
 | T32 W8 | 56.1% | 41.8% | 0.12% | 57.6% | 61.6% | 53.8 | 51.8µs |
 | T48 W8 | 66.4% | 31.1% | 0.12% | 68.2% | 54.6% | 63.7 | 81.2µs |
 
-![plane 時間分解](figures/ssd_time_by_load_plane.png)
+![plane 時間分解](../figures/ssd_time_by_load_plane.png)
 *圖 1：96 個平行單位的時間。負載升高，完全空閒從 81.9% 降到 31.1%；「有工作卻閒著」始終 ≤0.12%。*
 
-![channel 時間分解](figures/ssd_time_by_load_channel.png)
+![channel 時間分解](../figures/ssd_time_by_load_channel.png)
 *圖 2：4 條 channel 的平均時間。最忙的 T48 W8 也只用到 45%（資料 38.8%＋指令 6.6%）。*
 
-![每筆讀取的延遲組成](figures/ssd_time_by_load_queue.png)
+![每筆讀取的延遲組成](../figures/ssd_time_by_load_queue.png)
 *圖 3：每筆讀取的平均延遲拆成排隊＋tR＋其餘（指令、資料傳出、等 channel、主機介面、完成）。總延遲 82.3／90.6／128.5／159.0µs（comparison.json 模型值）；排隊 8.2→81.2µs，T48 W8 超過一個 tR，但同時在讀的只有 64／96 個 plane。*
 
 觀察：
@@ -1213,8 +1213,8 @@ SSD 從 k 個提名中挑 W 個不忙的；不忙的不足 W 個時，只能照�
 
 `plots/plot_sim_sweep_cached.py figures/sim_sweep_cached_sift100m <開快取的結果目錄，逗號分隔> [不開快取的目錄]`（3 個種子平均，種子間差 ≤0.3 個百分點）。用來取代舊的不開快取版（`sim_sweep_sift100m_latency.png`）放進報告。
 
-![N2 開快取：平均延遲降低](figures/sim_sweep_cached_sift100m_latency.png)
-*圖：node cache 10 萬下各策略的平均 query 延遲降低（6 組負載、5 種策略，補跑後完整版）。QPS 版見 [sim_sweep_cached_sift100m_qps.png](figures/sim_sweep_cached_sift100m_qps.png)。數據與解讀見下一節。*
+![N2 開快取：平均延遲降低](../figures/sim_sweep_cached_sift100m_latency.png)
+*圖：node cache 10 萬下各策略的平均 query 延遲降低（6 組負載、5 種策略，補跑後完整版）。QPS 版見 [sim_sweep_cached_sift100m_qps.png](../figures/sim_sweep_cached_sift100m_qps.png)。數據與解讀見下一節。*
 
 ## 2026-11-18 N2 開快取補跑：W16 與提名 3W
 
@@ -1235,7 +1235,7 @@ SSD 從 k 個提名中挑 W 個不忙的；不忙的不足 W 個時，只能照�
 | T32 W16 | +11（+27） | +15（+43） | +12（+37） | +6（+33） | +13（+58） |
 | T48 W16 | +5（+27） | +2（+43） | +1（+38） | +4（+62） | +5（+59） |
 
-![N2 開快取：QPS](figures/sim_sweep_cached_sift100m_qps.png)
+![N2 開快取：QPS](../figures/sim_sweep_cached_sift100m_qps.png)
 *圖：開快取後各策略的 QPS 收益。低負載（W4）的收益不受快取影響；W16 的收益大幅縮小。*
 
 **觀察**

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Where the 'SSD is mostly idle under original DiskANN' numbers come from (diskann_inssd_study.md, 2026-11-15 Part A).
+"""Where the 'SSD is mostly idle under original DiskANN' numbers come from (reports/2026-11-15_diskann_inssd_study.md, 2026-11-15 Part A).
 Input: slack.json from trace_replay/analyze_ssd_slack.py (MQSim transaction log, calibrated T500 model, num_nodes_to_cache=0,
 head/tail 5% trimmed). Round composition: the per-round table in the same study section (closed-loop replay).
 Usage: plots/plot_ssd_idle.py <T8_slack.json> <T16_slack.json> <out.png>

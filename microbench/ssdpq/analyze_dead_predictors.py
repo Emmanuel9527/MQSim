@@ -19,7 +19,7 @@ ap.add_argument('--out', type=Path, required=True); a = ap.parse_args()
 g = gs.Graph(); base = cq.load_base(); Q = cq.load_query()
 qz = cq.make('PQ32x8'); z = np.load('results/autonomous_20261122/codebooks/PQ32x8.npz')
 for k in z.files: setattr(qz, k, z[k])
-qz.ds = qz.cb.shape[2]; host = gs.Codes(qz, base)
+qz.ds = qz.cb.shape[2]; host = gs.ServerCodes() if gs.SERVER else gs.Codes(qz, base)
 cols = {k: [] for k in ['q', 'seen', 'rel', 'round', 'after_conv', 'dead', 'allvis', 'nnew', 'inres']}
 t0 = time.time()
 for qi in range(a.queries):

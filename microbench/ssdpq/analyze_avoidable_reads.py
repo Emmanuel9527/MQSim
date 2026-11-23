@@ -14,6 +14,9 @@ Skip experiments (the read is not issued; v keeps its host distance in the list 
                        a "neighbourhood summary" predictor kept in SSD DRAM)
   --skip dead_far:<x>  dead_oracle, but only when v's host distance > x * K-th candidate (keep likely results)
   --skip far:<x>       skip v if its host distance > x * current K-th candidate distance (cheap, list-only rule)
+  --skip nbrvis:<m>[:<x>]  SSD-side rule: the SSD sees every neighbour list it returns, so it can keep the visited set
+                       itself; with the m nearest neighbours of each node (ids, 4m B per node, precomputed offline)
+                       it skips v when all m are already visited [and v's host distance > x * K-th candidate]
 Usage: ssdpq/analyze_avoidable_reads.py --out f.json [--W 4 --L 100 --queries 300 --skip none]
 """
 import argparse, json, time
@@ -23,11 +26,11 @@ import coarse_quant as cq
 import graphsim as gs
 
 
-def search(g, q, host, W, L, K, skip='none'):
+def search(g, q, host, W, L, K, skip='none', base=None, near=None):
     visited = {g.medoid}; expanded = {}; parent = {g.medoid: -1}
     cl = gs.CL(L); cl.insert(float(host.dists(q, np.array([g.medoid]))[0]), g.medoid)
     reads = []  # per read: dict(v, round, ins, ins_ids)
-    skipped = 0; rnd = 0; topk_hist = []
+    skipped = 0; skip_dead = 0; rnd = 0; topk_hist = []
     hostd = {}
     while True:
         F = [i for i in cl.take(W) if i not in expanded]
@@ -47,7 +50,14 @@ def search(g, q, host, W, L, K, skip='none'):
             if skip.startswith('dead_far:') and dead and dF[i] > float(skip[9:]) * kth:
                 skipped += 1; continue
             if skip.startswith('far:') and dF[i] > float(skip[4:]) * kth:
-                skipped += 1; continue
+                skipped += 1; skip_dead += dead; continue
+            if skip.startswith('nbrvis:'):
+                parts = skip.split(':'); m = int(parts[1]); x = float(parts[2]) if len(parts) > 2 else 0.0
+                if i not in near:
+                    X = np.asarray(base[np.sort(nb)], dtype=np.float32)[np.argsort(np.argsort(nb))]
+                    near[i] = nb[np.argsort(((X - vec) ** 2).sum(1), kind='stable')]
+                if all(int(j) in visited for j in near[i][:m]) and dF[i] > x * kth:
+                    skipped += 1; skip_dead += dead; continue
             expanded[i] = float(((vec - q) ** 2).sum())
             ins = []
             if len(nbn):
@@ -74,7 +84,7 @@ def search(g, q, host, W, L, K, skip='none'):
         lab[c] = lab.get(c, 0) + 1
     late = sum(1 for r in reads if r['round'] > last_change)
     late_dead = sum(1 for r in reads if r['round'] > last_change and not r['ins'])
-    return dict(reads=len(reads), skipped=skipped, rounds=rnd, last_change_round=last_change, late=late,
+    return dict(reads=len(reads), skipped=skipped, skipped_dead=skip_dead, rounds=rnd, last_change_round=last_change, late=late,
                 late_dead=late_dead, **{f'n_{k}': lab.get(k, 0) for k in ['result', 'path', 'productive', 'inserted', 'dead']},
                 result=res)
 
@@ -92,10 +102,10 @@ def main():
     qz = cq.make(a.host); z = np.load(a.cbdir / f'{a.host}.npz')
     for k in z.files: setattr(qz, k, z[k])
     qz.ds = qz.cb.shape[2]
-    host = gs.Codes(qz, base)
-    rows = []; t0 = time.time()
+    host = gs.ServerCodes() if gs.SERVER else gs.Codes(qz, base)
+    rows = []; t0 = time.time(); near = {}
     for qi in range(a.queries):
-        r = search(g, Q[qi], host, a.W, a.L, a.K, a.skip)
+        r = search(g, Q[qi], host, a.W, a.L, a.K, a.skip, base, near)
         res = r.pop('result'); r['recall'] = len(set(res) & set(gt[qi, :a.K].tolist())) / a.K
         rows.append(r)
     m = {k: float(np.mean([r[k] for r in rows])) for k in rows[0]}

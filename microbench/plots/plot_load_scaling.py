@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real T500 load sweep (diskann_inssd_study.md, 2026-11-15 負載掃描; no node cache): IOPS / QPS / mean latency
+"""Real T500 load sweep (reports/2026-11-15_diskann_inssd_study.md, 2026-11-15 負載掃描; no node cache): IOPS / QPS / mean latency
 against mean in-flight reads. Usage: plots/plot_load_scaling.py <out.png>
 """
 import sys
